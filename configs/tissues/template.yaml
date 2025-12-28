@@ -1,0 +1,145 @@
+# Tissue Configuration Template for CellType-Refinery
+# Copy this file and customize for your tissue type.
+
+version: "1.0"
+tissue: "template"
+description: "Template tissue configuration"
+
+# ============================================================================
+# Hierarchical Gating Parameters
+# ============================================================================
+# Controls how cell types are assigned using marker-based gating.
+gating:
+  # Minimum fraction of markers that must be expressed at each hierarchy level
+  min_coverage:
+    0: 0.5   # Root level (e.g., Epithelium, Immune)
+    1: 0.4   # First child level (e.g., Ciliated, T Cells)
+    2: 0.3   # Second child level (e.g., CD4+ T Cells)
+    3: 0.3   # Third child level
+
+  # Minimum fraction of cells expressing each marker at each level
+  min_pos_frac:
+    0: 0.3
+    1: 0.20
+    2: 0.15
+    3: 0.15
+
+  # Root hard requirements: specific markers required for root assignment
+  # Example: Immune cells must express CD45
+  root_hard_requirements: {}
+  # Example format:
+  # root_hard_requirements:
+  #   "Immune Cells":
+  #     marker: "CD45"
+  #     min_pos_frac: 0.30
+  #     min_enrichment: 0.0
+
+  # Root veto markers: markers that exclude a root assignment
+  # Example: Immune cells should NOT express epithelial markers
+  root_veto_markers: {}
+  # Example format:
+  # root_veto_markers:
+  #   "Immune Cells":
+  #     markers: ["Pan-Cytokeratin", "E-cadherin"]
+  #     max_pos_frac: 0.20
+
+# ============================================================================
+# Cell Quality Control Thresholds
+# ============================================================================
+qc:
+  # Percentile thresholds for cell area filtering
+  area_percentile_low: 1
+  area_percentile_high: 99
+
+  # Nucleus-to-cell ratio thresholds
+  nucleus_ratio_min: 0.1
+  nucleus_ratio_max: 0.9
+
+  # Intensity filtering (percentiles)
+  intensity_percentile_low: 1
+
+  # Autofluorescence filtering
+  autofluorescence_percentile_high: 99
+
+  # Maximum fraction of cells to remove per sample
+  max_removal_fraction: 0.15
+
+# ============================================================================
+# Cell Type Pattern Matching
+# ============================================================================
+# Patterns for classifying cell types into biological categories.
+# Used for composition analysis and biology metrics.
+patterns:
+  epithelial: []
+  # Example: ["Epithelium", "Epithelial", "Ciliated", "Secretory"]
+
+  stromal: []
+  # Example: ["Stromal", "Stroma", "Fibroblast"]
+
+  smooth_muscle: []
+  # Example: ["Smooth", "SMA", "muscle"]
+
+  immune: []
+  # Example: ["CD45", "Immune", "Myeloid", "Lymphocyte", "NK"]
+
+  endothelial: []
+  # Example: ["Endothel", "Vascular", "Lymphatic"]
+
+# ============================================================================
+# Regional Configuration
+# ============================================================================
+regions:
+  # Anatomical order of regions (for consistent plotting)
+  order: []
+  # Example: ["region_A", "region_B", "region_C"]
+
+  # Colors for region visualization
+  colors: {}
+  # Example:
+  # colors:
+  #   region_A: "#E41A1C"
+  #   region_B: "#377EB8"
+
+# ============================================================================
+# Tissue-Specific Biology Metrics
+# ============================================================================
+biology:
+  enabled: false
+  # Set to true to enable tissue-specific biology calculations
+
+  # List of metrics to compute
+  metrics: []
+  # Available metrics depend on tissue type. Examples:
+  # - es_ratio (epithelial:stromal ratio)
+  # - immune_infiltration
+  # - endothelial_percentage
+
+  # Regional expectations (for validation)
+  regional_expectations: {}
+  # Example:
+  # regional_expectations:
+  #   region_A:
+  #     es_ratio_range: [0.5, 2.5]
+  #     epithelial_pct_range: [30, 50]
+
+# ============================================================================
+# Review/Flagging Rules
+# ============================================================================
+review:
+  enabled: true
+
+  # Global proportion thresholds
+  proportion_thresholds:
+    min_unassigned_rate: 0.0
+    max_unassigned_rate: 0.10
+    max_hybrid_rate: 0.05
+
+  # Custom flagging rules
+  rules: []
+  # Example:
+  # rules:
+  #   - rule_id: CUSTOM_RULE
+  #     severity: warning
+  #     condition: "value > threshold"
+  #     message: "Custom rule triggered"
+  #     threshold: 0.5
