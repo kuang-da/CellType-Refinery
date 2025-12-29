@@ -182,8 +182,9 @@ class CellQC:
         cell_matrix.set_index(cell_id_col, inplace=True)
         cell_metadata.set_index(cell_id_col, inplace=True)
 
-        # Get marker columns and compute intensities
-        marker_cols = [c for c in cell_matrix.columns]
+        # Get marker columns and compute intensities (exclude non-marker columns)
+        exclude_cols = set(self.config.exclude_from_markers)
+        marker_cols = [c for c in cell_matrix.columns if c not in exclude_cols]
         intensity_matrix = cell_matrix[marker_cols].astype(float)
         total_intensity = intensity_matrix.sum(axis=1)
         median_intensity = intensity_matrix.median(axis=1)

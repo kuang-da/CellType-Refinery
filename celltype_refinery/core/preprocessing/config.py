@@ -70,6 +70,8 @@ class QCConfig:
         Column name for cell area
     nucleus_area_col : str
         Column name for nucleus area
+    exclude_from_markers : List[str]
+        Columns to exclude from marker list (in addition to cell_id_col)
     """
 
     area_percentile_low: float = 1.0
@@ -81,6 +83,9 @@ class QCConfig:
     max_removal_fraction: float = 0.15
     area_col: str = "cell_area"
     nucleus_area_col: str = "nucleus_area"
+    exclude_from_markers: List[str] = field(
+        default_factory=lambda: ["patch_id", "global_cell_id"]
+    )
 
 
 @dataclass
