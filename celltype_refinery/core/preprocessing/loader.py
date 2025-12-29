@@ -203,8 +203,10 @@ class DataLoader:
         # Load matrix
         try:
             result.cell_matrix = self.load_cell_matrix(matrix_path)
+            # Exclude cell_id_col and any configured metadata columns from markers
+            exclude_cols = {cell_id_col} | set(self.config.exclude_from_markers)
             marker_cols = [
-                c for c in result.cell_matrix.columns if c != cell_id_col
+                c for c in result.cell_matrix.columns if c not in exclude_cols
             ]
             result.markers = set(marker_cols)
             result.n_cells = len(result.cell_matrix)
@@ -319,5 +321,5 @@ class DataLoader:
         List[str]
             Marker column names
         """
-        cell_id_col = self.config.cell_id_col
-        return [c for c in df.columns if c != cell_id_col]
+        exclude_cols = {self.config.cell_id_col} | set(self.config.exclude_from_markers)
+        return [c for c in df.columns if c not in exclude_cols]

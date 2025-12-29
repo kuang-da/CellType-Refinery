@@ -25,6 +25,8 @@ class LoaderConfig:
         Required metadata columns
     coordinate_cols : Tuple[str, str]
         Column names for x, y coordinates
+    exclude_from_markers : List[str]
+        Columns to exclude from marker list (in addition to cell_id_col)
     """
 
     cell_id_col: str = "cell_mask_id"
@@ -38,6 +40,9 @@ class LoaderConfig:
             ("cell_centroid_x", "cell_centroid_y"),
             ("patch_x", "patch_y"),
         ]
+    )
+    exclude_from_markers: List[str] = field(
+        default_factory=lambda: ["patch_id", "global_cell_id"]
     )
 
 
