@@ -40,6 +40,8 @@ def cmd_export_review(args: argparse.Namespace) -> int:
 
     try:
         import scanpy as sc
+        import pandas as pd
+        import yaml
     except ImportError:
         logger.error("scanpy is required. Install with: pip install scanpy")
         return 1
@@ -61,7 +63,56 @@ def cmd_export_review(args: argparse.Namespace) -> int:
     cell_type_col = args.cell_type_col or detect_cell_type_column(adata)
     cluster_col = args.cluster_col or detect_cluster_column(adata)
 
-    # Run all review exports
+    # Auto-populate workflow state from diagnostic files (matches reference schema)
+    diagnostic_summary = {}
+    diagnostic_report_path = None
+    groups_executed = []
+    groups_skipped = []
+    final_output_path = str(input_path)
+
+    # Try to load diagnostic_report.csv to extract summary
+    diag_report_candidates = [
+        output_dir / 'diagnostic_report.csv',
+        Path(args.stage_h_dir) / 'diagnostic_report.csv' if args.stage_h_dir else None,
+    ]
+    for diag_path in [p for p in diag_report_candidates if p and p.exists()]:
+        try:
+            diag_df = pd.read_csv(diag_path)
+            if 'recommendation' in diag_df.columns:
+                rec_counts = diag_df['recommendation'].value_counts().to_dict()
+                diagnostic_summary = {
+                    'SUBCLUSTER': rec_counts.get('SUBCLUSTER', 0),
+                    'RELABEL': rec_counts.get('RELABEL', 0),
+                    'SKIP': rec_counts.get('SKIP', 0),
+                }
+                diagnostic_report_path = str(diag_path)
+                logger.info(f'  Loaded diagnostic summary from {diag_path}')
+                break
+        except Exception as e:
+            logger.debug(f'  Could not load diagnostic_report.csv: {e}')
+
+    # Try to load groups_derived.yaml to get groups_executed
+    groups_candidates = [
+        output_dir / 'groups_derived.yaml',
+        Path(args.stage_h_dir) / 'groups_derived.yaml' if args.stage_h_dir else None,
+    ]
+    for groups_path in [p for p in groups_candidates if p and p.exists()]:
+        try:
+            with open(groups_path) as f:
+                groups_data = yaml.safe_load(f)
+            if 'groups' in groups_data:
+                for g in groups_data['groups']:
+                    group_name = g.get('name', '')
+                    if g.get('subcluster_ids'):
+                        groups_executed.append(group_name)
+                    else:
+                        groups_skipped.append(group_name)
+                logger.info(f'  Loaded groups from {groups_path}')
+                break
+        except Exception as e:
+            logger.debug(f'  Could not load groups_derived.yaml: {e}')
+
+    # Run all review exports with workflow state
     run_review_exports(
         adata=adata,
         output_dir=output_dir,
@@ -70,6 +121,14 @@ def cmd_export_review(args: argparse.Namespace) -> int:
         stage_h_dir=args.stage_h_dir,
         marker_map_path=args.marker_map,
         input_path=str(input_path),
+        # Workflow state parameters (matches reference schema)
+        diagnose_complete=bool(diagnostic_summary),
+        diagnostic_summary=diagnostic_summary,
+        diagnostic_report_path=diagnostic_report_path,
+        execute_complete=True,
+        groups_executed=groups_executed,
+        groups_skipped=groups_skipped,
+        final_output_path=final_output_path,
         logger=logger,
     )
 
@@ -138,14 +197,54 @@ def cmd_export_all(args: argparse.Namespace) -> int:
     # Also export composition and review summary
     export_composition_stats(adata, output_dir, cell_type_col, logger)
 
+    # Build workflow state for embedding (matches reference schema)
+    from datetime import datetime
+    now = datetime.now().isoformat()
+    workflow_state_dict = {
+        'version': '1.0',
+        'marker_map_path': args.marker_map or '',
+        'input_path': str(input_path),
+        'stage_h_dir': args.stage_h_dir or '',
+        'out_dir': str(output_dir),
+        'created_at': now,
+        'updated_at': now,
+        'annotate_complete': False,
+        'annotate_timestamp': None,
+        'annotate_output': None,
+        'diagnose_complete': True,
+        'diagnose_timestamp': now,
+        'diagnostic_summary': {},
+        'diagnostic_report_path': None,
+        'execute_complete': True,
+        'execute_timestamp': now,
+        'groups_executed': [],
+        'groups_skipped': [],
+        'final_output_path': str(input_path),
+        'review_complete': True,
+        'review_timestamp': now,
+        'iterations': [],
+        'current_iteration': 0,
+        'stopping_reason': None,
+    }
+
     comp_global = adata.obs[cell_type_col].value_counts()
-    export_review_summary(adata, output_dir, cell_type_col, cluster_col, comp_global, logger)
+    export_review_summary(
+        adata, output_dir, cell_type_col, cluster_col, comp_global,
+        workflow_state=workflow_state_dict,
+        logger=logger,
+    )
 
     export_workflow_state(
         output_dir,
         marker_map_path=args.marker_map,
         input_path=str(input_path),
         stage_h_dir=args.stage_h_dir,
+        diagnose_complete=True,
+        diagnose_timestamp=now,
+        execute_complete=True,
+        execute_timestamp=now,
+        review_complete=True,
+        review_timestamp=now,
         logger=logger,
     )
 

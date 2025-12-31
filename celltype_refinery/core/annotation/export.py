@@ -185,125 +185,143 @@ def get_hierarchical_runner_up(
     """Get hierarchical runner-up: the losing sibling at the tightest decision point.
 
     Instead of using flat score ranking (which can incorrectly identify the assigned
-    label as runner-up), this function traces the actual decision tree to find which
-    alternative was closest to winning at each branch.
+    label as runner-up), this function finds the actual competing sibling at the
+    decision step where the margin was smallest.
+
+    For `ambiguous_siblings` stop reason, extracts runner-up from the composition
+    JSON stored in annotations (which contains `_runner_up_by_score` at the correct
+    stopping depth).
 
     Parameters
     ----------
     cluster_id : str
-        Cluster ID to find runner-up for
+        The cluster ID to look up
     decision_steps : pd.DataFrame
-        Decision trace with columns: cluster_id, level, candidates, winner, scores, margin
-        Each row represents one decision point in the hierarchy.
+        DataFrame with columns: cluster_id, step_idx, parent_label, child_label,
+        child_passed_gate, child_score, selected, margin_to_runner_up
     cluster_annotations : pd.DataFrame
-        Cluster annotations with columns: cluster_id, assigned_label, assigned_path
+        DataFrame with columns: cluster_id, min_margin_along_path, assigned_label,
+        stop_reason, composition (JSON), etc.
     marker_scores : pd.DataFrame, optional
-        Full marker scores for fallback (flat max if no decision data)
+        DataFrame with marker scores to look up runner-up score if not in composition
 
     Returns
     -------
     Tuple[str, float, float]
-        (runner_up_label, runner_up_score, margin_from_assigned)
-
-    Examples
-    --------
-    >>> # For cluster 5 with path "Immune/T Cells" and margin 0.15 at T-cell branch:
-    >>> runner_up, score, margin = get_hierarchical_runner_up(
-    ...     "5", decision_steps, annotations)
-    >>> print(f"Runner-up: {runner_up}, margin: {margin:.2f}")
-    Runner-up: B Cells, margin: 0.15
+        (runner_up_label, runner_up_score, min_margin)
+        - runner_up_label: The losing sibling at the tightest decision point
+        - runner_up_score: Score of the runner-up
+        - min_margin: The minimum margin along the hierarchical path (gap)
 
     Notes
     -----
-    The margin represents how close the decision was at the tightest point.
-    A small margin (e.g., <0.3) indicates the assignment was borderline.
+    Returns ("", 0.0, NaN) when no meaningful competition exists (e.g., single
+    candidate at each level). This matches reference behavior for byte-for-byte
+    compatibility.
     """
-    # Default return for missing data
-    default_result = ("Unknown", 0.0, float("inf"))
+    # Handle empty inputs
+    if cluster_annotations is None or cluster_annotations.empty:
+        return "", 0.0, float("nan")
 
-    # Get annotation for this cluster
-    ann_row = cluster_annotations[
-        cluster_annotations["cluster_id"].astype(str) == str(cluster_id)
-    ]
-    if ann_row.empty:
-        return default_result
+    # Get annotation row for this cluster
+    ann = cluster_annotations[cluster_annotations["cluster_id"].astype(str) == str(cluster_id)]
+    if ann.empty:
+        return "", 0.0, float("nan")
 
-    assigned_label = str(ann_row.iloc[0].get("assigned_label", "Unknown"))
-    assigned_score = float(ann_row.iloc[0].get("assigned_score", 0))
+    ann_row = ann.iloc[0]
+    min_margin = ann_row.get("min_margin_along_path", float("nan"))
+    if pd.isna(min_margin):
+        min_margin = float("nan")
 
-    # If no decision steps available, fall back to flat marker scores
-    if decision_steps is None or decision_steps.empty:
-        if marker_scores is not None and not marker_scores.empty:
-            cluster_scores = marker_scores[
-                marker_scores["cluster_id"].astype(str) == str(cluster_id)
-            ]
-            if len(cluster_scores) >= 2:
-                sorted_scores = cluster_scores.nlargest(2, "score")
-                runner_up_row = sorted_scores.iloc[1]
-                runner_up_label = str(runner_up_row.get("label", "Unknown"))
-                runner_up_score = float(runner_up_row.get("score", 0))
-                margin = assigned_score - runner_up_score
-                return (runner_up_label, runner_up_score, margin)
-        return default_result
+    stop_reason = str(ann_row.get("stop_reason", ""))
 
-    # Get decision steps for this cluster
-    cluster_decisions = decision_steps[
-        decision_steps["cluster_id"].astype(str) == str(cluster_id)
-    ]
-    if cluster_decisions.empty:
-        return default_result
-
-    # Find the tightest decision (minimum margin)
-    min_margin = float("inf")
-    tightest_runner_up = "Unknown"
-    tightest_score = 0.0
-
-    for _, step in cluster_decisions.iterrows():
-        # Parse candidates and scores
-        candidates = step.get("candidates", "")
-        scores_str = step.get("scores", "")
-        winner = step.get("winner", "")
-        margin = step.get("margin", float("inf"))
-
-        # Skip if no margin data
-        if pd.isna(margin) or margin == float("inf"):
-            continue
-
-        # Parse candidates list
-        if isinstance(candidates, str):
-            candidate_list = [c.strip() for c in candidates.split(",") if c.strip()]
-        elif isinstance(candidates, (list, tuple)):
-            candidate_list = list(candidates)
-        else:
-            continue
-
-        # Parse scores (if available)
-        score_list = []
-        if isinstance(scores_str, str):
+    # For ambiguous_siblings, extract runner-up from composition JSON
+    # The composition JSON stores _runner_up_by_score at the correct stopping depth
+    if stop_reason == "ambiguous_siblings":
+        composition_str = ann_row.get("composition", "")
+        if composition_str and isinstance(composition_str, str) and composition_str.strip():
             try:
-                score_list = [float(s.strip()) for s in scores_str.split(",") if s.strip()]
-            except ValueError:
-                pass
-        elif isinstance(scores_str, (list, tuple)):
-            score_list = [float(s) for s in scores_str]
+                composition = json.loads(composition_str)
+                runner_up_label = composition.get("_runner_up_by_score", "")
+                gap = composition.get("_gap", min_margin)
 
-        # Find runner-up at this decision point
-        if len(candidate_list) >= 2 and len(score_list) >= 2:
-            # Create candidate-score pairs excluding winner
-            pairs = list(zip(candidate_list, score_list))
-            non_winners = [(c, s) for c, s in pairs if c != winner]
-            if non_winners:
-                # Get highest scoring non-winner
-                best_non_winner = max(non_winners, key=lambda x: x[1])
-                if margin < min_margin:
-                    min_margin = margin
-                    tightest_runner_up = best_non_winner[0]
-                    tightest_score = best_non_winner[1]
+                # Get runner-up score from composition or marker_scores
+                runner_up_score = 0.0
+                if runner_up_label:
+                    # Try to get score from marker_scores if available
+                    if marker_scores is not None and not marker_scores.empty:
+                        score_row = marker_scores[
+                            (marker_scores["cluster_id"].astype(str) == str(cluster_id)) &
+                            (marker_scores["label"] == runner_up_label)
+                        ]
+                        if not score_row.empty:
+                            runner_up_score = float(score_row.iloc[0].get("score", 0.0))
+                    # Alternative: infer from gap and winner score
+                    if runner_up_score == 0.0 and not pd.isna(gap):
+                        top_label = composition.get("_top_by_score", "")
+                        if top_label and marker_scores is not None and not marker_scores.empty:
+                            top_row = marker_scores[
+                                (marker_scores["cluster_id"].astype(str) == str(cluster_id)) &
+                                (marker_scores["label"] == top_label)
+                            ]
+                            if not top_row.empty:
+                                top_score = float(top_row.iloc[0].get("score", 0.0))
+                                runner_up_score = top_score - float(gap)
 
-    if tightest_runner_up != "Unknown":
-        return (tightest_runner_up, tightest_score, min_margin)
+                if runner_up_label:
+                    return (
+                        str(runner_up_label),
+                        float(runner_up_score),
+                        float(gap) if not pd.isna(gap) else float(min_margin),
+                    )
+            except (json.JSONDecodeError, TypeError, KeyError):
+                pass  # Fall through to decision_steps logic
 
-    return default_result
+    # Standard logic: use decision_steps
+    if decision_steps is None or decision_steps.empty:
+        return "", 0.0, min_margin
+
+    # Find decision steps for this cluster
+    cluster_steps = decision_steps[decision_steps["cluster_id"].astype(str) == str(cluster_id)]
+    if cluster_steps.empty:
+        return "", 0.0, min_margin
+
+    if "margin_to_runner_up" not in cluster_steps.columns:
+        return "", 0.0, min_margin
+
+    # For ambiguous_siblings, the winner step is marked selected=False but has margin_to_runner_up
+    # We need to consider ALL steps with valid margins, not just selected ones
+    steps_with_margins = cluster_steps[
+        cluster_steps["margin_to_runner_up"].notna() &
+        (cluster_steps["margin_to_runner_up"] != np.inf)
+    ]
+    if steps_with_margins.empty:
+        return "", 0.0, min_margin
+
+    # Find the step with minimum margin (tightest decision)
+    min_idx = steps_with_margins["margin_to_runner_up"].idxmin()
+    min_step = steps_with_margins.loc[min_idx]
+    step_margin = float(min_step["margin_to_runner_up"])
+
+    # Get all siblings at that step (same parent, passed gate)
+    siblings = cluster_steps[
+        (cluster_steps["step_idx"] == min_step["step_idx"]) &
+        (cluster_steps["parent_label"] == min_step["parent_label"]) &
+        (cluster_steps["child_passed_gate"] == True)
+    ]
+
+    if len(siblings) < 2:
+        return "", 0.0, min_margin
+
+    # Sort by score descending; the winner is the one with highest score
+    siblings = siblings.sort_values("child_score", ascending=False)
+    runner = siblings.iloc[1]  # Second-best is the runner-up
+
+    return (
+        str(runner.get("child_label", "")),
+        float(runner.get("child_score", 0.0)),
+        float(step_margin),  # Use the actual gap at this step, not min_margin_along_path
+    )
 
 
 # =============================================================================
@@ -489,7 +507,7 @@ def export_enhanced_annotations(
             record[f"score{level_suffix}"] = round(score, 3)
             record[f"assigned_path{level_suffix}"] = assigned_path
             record[f"stop_reason{level_suffix}"] = stop_reason
-            record[f"confidence{level_suffix}"] = confidence or _classify_confidence_band(score)
+            record[f"confidence{level_suffix}"] = confidence or _classify_confidence_band(round(float(score), 3))
             record[f"coverage{level_suffix}"] = round(coverage, 3)
             record[f"is_ambiguous_root{level_suffix}"] = is_ambiguous_root
             record[f"root_label{level_suffix}"] = root_label
@@ -655,7 +673,7 @@ def export_cluster_annotations_stage_h_format(
             "is_ambiguous_root": is_ambiguous,
             "ambiguous_root_candidates": row.get(f"ambiguous_root_candidates_lvl{iteration}", ""),
             "root_fail_reasons": row.get(f"root_fail_reasons_lvl{iteration}", ""),
-            "confidence_level": row.get("confidence_level", _classify_confidence_band(float(score) if score else 0)),
+            "confidence_level": row.get("confidence_level", _classify_confidence_band(round(float(score), 3) if score else 0)),
         })
 
     df = pd.DataFrame.from_records(records)
@@ -1333,9 +1351,13 @@ def export_review_summary(
     cell_type_col: str,
     cluster_col: str,
     comp_global: pd.DataFrame,
+    workflow_state: Optional[Dict[str, Any]] = None,
     logger: Optional[logging.Logger] = None,
 ) -> Path:
     """Export review summary JSON with lineage groupings.
+
+    Matches reference schema from ft/src/workflow/stage_i_unified.py:
+    - generated_at, total_cells, composition_by_group, workflow_state
 
     Parameters
     ----------
@@ -1349,6 +1371,8 @@ def export_review_summary(
         Column name containing cluster IDs
     comp_global : pd.DataFrame
         Global composition DataFrame
+    workflow_state : Dict[str, Any], optional
+        Workflow state dictionary to embed (matches reference schema)
     logger : logging.Logger, optional
         Logger instance
 
@@ -1363,62 +1387,55 @@ def export_review_summary(
 
     logger.info('Generating review summary...')
 
-    # Group composition by lineage
+    # Group composition by lineage (matching reference grouping logic)
+    # Reference uses simple keyword matching with "Other" catch-all
     composition_by_group: Dict[str, Dict[str, int]] = {}
-    other_types: Dict[str, int] = {}
 
     for cell_type, count in adata.obs[cell_type_col].value_counts().items():
+        cell_type_str = str(cell_type)
+        cell_type_lower = cell_type_str.lower()
         assigned = False
-        for group, members in LINEAGE_GROUPS.items():
-            # Check if cell_type matches any member (case-insensitive, partial match)
-            for member in members:
-                if (member.lower() in cell_type.lower() or
-                        cell_type.lower() in member.lower()):
-                    if group not in composition_by_group:
-                        composition_by_group[group] = {}
-                    composition_by_group[group][cell_type] = int(count)
-                    assigned = True
-                    break
-            if assigned:
-                break
+
+        # Determine group from cell type name (matching reference logic)
+        group = None
+        if "epithelium" in cell_type_lower or "epithelial" in cell_type_lower:
+            group = "Epithelium"
+        elif "endothelium" in cell_type_lower or "endothelial" in cell_type_lower:
+            group = "Endothelium"
+        elif ("mesenchym" in cell_type_lower or "stromal" in cell_type_lower or
+              "smooth muscle" in cell_type_lower):
+            group = "Mesenchymal Cells"
+        elif ("immune" in cell_type_lower or "macrophage" in cell_type_lower or
+              "t cell" in cell_type_lower):
+            group = "Immune Cells"
+        elif "unassigned" in cell_type_lower:
+            group = "Unassigned"
+        elif "~" in cell_type_str:
+            group = "Hybrids"
+
+        if group:
+            if group not in composition_by_group:
+                composition_by_group[group] = {}
+            composition_by_group[group][cell_type_str] = int(count)
+            assigned = True
 
         if not assigned:
-            # Check for hybrid types (contain ~)
-            if '~' in cell_type:
-                parts = cell_type.split('~')
-                # Assign to first lineage found
-                for part in parts:
-                    for group, members in LINEAGE_GROUPS.items():
-                        for member in members:
-                            if member.lower() in part.lower():
-                                if group not in composition_by_group:
-                                    composition_by_group[group] = {}
-                                composition_by_group[group][cell_type] = int(count)
-                                assigned = True
-                                break
-                        if assigned:
-                            break
-                    if assigned:
-                        break
+            # "Other" catch-all for unmatched cell types (matches reference)
+            if "Other" not in composition_by_group:
+                composition_by_group["Other"] = {}
+            composition_by_group["Other"][cell_type_str] = int(count)
 
-            if not assigned:
-                other_types[cell_type] = int(count)
-
-    if other_types:
-        composition_by_group['Other'] = other_types
-
-    review_summary = {
+    # Build review summary matching reference schema exactly
+    # Reference: ft/src/workflow/stage_i_unified.py lines 1103-1111
+    review_summary: Dict[str, Any] = {
         'generated_at': datetime.now().isoformat(),
         'total_cells': int(adata.n_obs),
         'composition_by_group': composition_by_group,
-        'cell_type_column': cell_type_col,
-        'cluster_column': cluster_col,
-        'n_cell_types': len(comp_global),
-        'n_clusters': (
-            adata.obs[cluster_col].nunique()
-            if cluster_col in adata.obs.columns else 0
-        ),
     }
+
+    # Embed workflow_state if provided (matches reference schema)
+    if workflow_state is not None:
+        review_summary['workflow_state'] = workflow_state
 
     summary_path = output_dir / 'review_summary.json'
     with open(summary_path, 'w') as f:
@@ -1438,9 +1455,37 @@ def export_workflow_state(
     marker_map_path: Optional[str] = None,
     input_path: Optional[str] = None,
     stage_h_dir: Optional[str] = None,
+    # Annotate step
+    annotate_complete: bool = False,
+    annotate_timestamp: Optional[str] = None,
+    annotate_output: Optional[str] = None,
+    # Diagnose step
+    diagnose_complete: bool = False,
+    diagnose_timestamp: Optional[str] = None,
+    diagnostic_summary: Optional[Dict[str, int]] = None,
+    diagnostic_report_path: Optional[str] = None,
+    # Execute step
+    execute_complete: bool = False,
+    execute_timestamp: Optional[str] = None,
+    groups_executed: Optional[List[str]] = None,
+    groups_skipped: Optional[List[str]] = None,
+    final_output_path: Optional[str] = None,
+    # Review step
+    review_complete: bool = True,
+    review_timestamp: Optional[str] = None,
+    # Iteration tracking
+    iterations: Optional[List[Dict[str, Any]]] = None,
+    current_iteration: int = 0,
+    stopping_reason: Optional[str] = None,
+    # Created/updated timestamps
+    created_at: Optional[str] = None,
+    updated_at: Optional[str] = None,
     logger: Optional[logging.Logger] = None,
 ) -> Path:
     """Export workflow state YAML for tracking.
+
+    Matches reference schema from ft/src/workflow/state.py WorkflowState class.
+    Contains all 18 fields for full compatibility.
 
     Parameters
     ----------
@@ -1452,6 +1497,44 @@ def export_workflow_state(
         Path to input h5ad
     stage_h_dir : str, optional
         Path to Stage H directory
+    annotate_complete : bool
+        Whether annotate step is complete
+    annotate_timestamp : str, optional
+        When annotate completed
+    annotate_output : str, optional
+        Path to annotate output
+    diagnose_complete : bool
+        Whether diagnose step is complete
+    diagnose_timestamp : str, optional
+        When diagnose completed
+    diagnostic_summary : Dict[str, int], optional
+        Summary counts {SUBCLUSTER: n, RELABEL: n, SKIP: n}
+    diagnostic_report_path : str, optional
+        Path to diagnostic_report.csv
+    execute_complete : bool
+        Whether execute step is complete
+    execute_timestamp : str, optional
+        When execute completed
+    groups_executed : List[str], optional
+        List of group names that were executed
+    groups_skipped : List[str], optional
+        List of group names that were skipped
+    final_output_path : str, optional
+        Path to refined_final.h5ad
+    review_complete : bool
+        Whether review step is complete
+    review_timestamp : str, optional
+        When review completed
+    iterations : List[Dict], optional
+        List of iteration state dicts
+    current_iteration : int
+        Current iteration number
+    stopping_reason : str, optional
+        Reason for stopping iterations
+    created_at : str, optional
+        Timestamp when state was created
+    updated_at : str, optional
+        Timestamp when state was last updated
     logger : logging.Logger, optional
         Logger instance
 
@@ -1466,21 +1549,46 @@ def export_workflow_state(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    now = datetime.now().isoformat()
+
+    # Build workflow state matching reference schema exactly
+    # Reference: ft/src/workflow/state.py WorkflowState dataclass
     workflow_state = {
+        # Config
         'version': '1.0',
         'marker_map_path': marker_map_path or '',
         'input_path': input_path or '',
         'stage_h_dir': stage_h_dir or '',
         'out_dir': str(output_dir),
-        'created_at': datetime.now().isoformat(),
-        'updated_at': datetime.now().isoformat(),
-        'review_complete': True,
-        'review_timestamp': datetime.now().isoformat(),
+        'created_at': created_at or now,
+        'updated_at': updated_at or now,
+        # Annotate step
+        'annotate_complete': annotate_complete,
+        'annotate_timestamp': annotate_timestamp,
+        'annotate_output': annotate_output,
+        # Diagnose step
+        'diagnose_complete': diagnose_complete,
+        'diagnose_timestamp': diagnose_timestamp or now,
+        'diagnostic_summary': diagnostic_summary or {},
+        'diagnostic_report_path': diagnostic_report_path,
+        # Execute step
+        'execute_complete': execute_complete,
+        'execute_timestamp': execute_timestamp,
+        'groups_executed': groups_executed or [],
+        'groups_skipped': groups_skipped or [],
+        'final_output_path': final_output_path,
+        # Review step
+        'review_complete': review_complete,
+        'review_timestamp': review_timestamp or now,
+        # Iteration tracking
+        'iterations': iterations or [],
+        'current_iteration': current_iteration,
+        'stopping_reason': stopping_reason,
     }
 
     state_path = output_dir / 'workflow_state.yaml'
     with open(state_path, 'w') as f:
-        yaml.dump(workflow_state, f, default_flow_style=False)
+        yaml.safe_dump(workflow_state, f, default_flow_style=False, sort_keys=False)
     logger.info('  Wrote workflow_state.yaml')
 
     return state_path
@@ -1539,82 +1647,14 @@ def _build_reason_string(row: pd.Series) -> str:
     return f"{label} (score={score:.2f})"
 
 
-def _get_runner_up_44(
-    cluster_id: str,
-    assigned_label: str,
-    scores_df: Optional[pd.DataFrame],
-) -> Tuple[str, float, float]:
-    """Get runner-up label, score, and gap for a cluster.
-
-    Parameters
-    ----------
-    cluster_id : str
-        Cluster ID
-    assigned_label : str
-        Assigned cell type label
-    scores_df : pd.DataFrame, optional
-        Marker scores DataFrame
-
-    Returns
-    -------
-    Tuple[str, float, float]
-        (runner_up_label, runner_up_score, gap)
-    """
-    if scores_df is None or scores_df.empty:
-        return '', 0.0, 0.0
-
-    if 'cluster_id' not in scores_df.columns or 'score' not in scores_df.columns:
-        return '', 0.0, 0.0
-
-    # Filter to this cluster
-    cluster_scores = scores_df[
-        scores_df['cluster_id'].astype(str) == str(cluster_id)
-    ].copy()
-    if cluster_scores.empty:
-        return '', 0.0, 0.0
-
-    # Sort by score descending
-    cluster_scores = cluster_scores.sort_values('score', ascending=False)
-
-    # Get top two scores
-    if len(cluster_scores) < 2:
-        return '', 0.0, 0.0
-
-    top_row = cluster_scores.iloc[0]
-    second_row = cluster_scores.iloc[1]
-
-    top_label = top_row.get('label', '')
-    top_score = float(top_row.get('score', 0))
-    second_label = second_row.get('label', '')
-    second_score = float(second_row.get('score', 0))
-
-    # Runner-up is the second-best label
-    # Gap is the difference between assigned and runner-up
-    if str(top_label) == str(assigned_label):
-        runner_up_label = second_label
-        runner_up_score = second_score
-        gap = top_score - second_score
-    else:
-        # Assigned might not be top score (e.g., gating chose a lower-scoring subtype)
-        runner_up_label = top_label
-        runner_up_score = top_score
-        # Find assigned score
-        assigned_rows = cluster_scores[cluster_scores['label'] == assigned_label]
-        if not assigned_rows.empty:
-            assigned_score = float(assigned_rows.iloc[0].get('score', 0))
-            gap = assigned_score - top_score
-        else:
-            gap = 0.0
-
-    return runner_up_label, runner_up_score, gap
-
-
 def generate_enhanced_annotations_44col(
     cluster_ann: pd.DataFrame,
     scores_df: Optional[pd.DataFrame],
     stage_h_dir: Optional[str] = None,
     iteration: int = 1,
     logger: Optional[logging.Logger] = None,
+    decision_steps: Optional[pd.DataFrame] = None,
+    cluster_annotations: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """Generate 44-column enhanced annotations matching reference format.
 
@@ -1632,11 +1672,17 @@ def generate_enhanced_annotations_44col(
     scores_df : pd.DataFrame, optional
         Marker scores for runner-up calculation
     stage_h_dir : str, optional
-        Path to Stage H directory for lvl0 data
+        Path to Stage H directory for lvl0 data and decision_steps.csv
     iteration : int
         Current iteration number (default: 1)
     logger : logging.Logger, optional
         Logger instance
+    decision_steps : pd.DataFrame, optional
+        Combined decision steps (Stage H + current iteration) for hierarchical runner-up.
+        If not provided, will try to load from stage_h_dir/decision_steps.csv
+    cluster_annotations : pd.DataFrame, optional
+        Combined cluster annotations for hierarchical runner-up lookup.
+        If not provided, uses cluster_ann parameter.
 
     Returns
     -------
@@ -1644,6 +1690,10 @@ def generate_enhanced_annotations_44col(
         44-column enhanced annotations DataFrame
     """
     logger = logger or logging.getLogger(__name__)
+
+    # Use cluster_ann as cluster_annotations if not provided
+    if cluster_annotations is None:
+        cluster_annotations = cluster_ann
 
     # Hierarchical columns that exist per level
     HIER_COLS = [
@@ -1655,17 +1705,43 @@ def generate_enhanced_annotations_44col(
 
     # Load Stage H annotations for lvl0 data if available
     stage_h_lookup = {}
+    stage_h_annotations_df = pd.DataFrame()
+    stage_h_decision_steps_df = pd.DataFrame()
     if stage_h_dir:
         stage_h_path = Path(stage_h_dir) / 'cluster_annotations.csv'
         if stage_h_path.exists():
             try:
-                stage_h_df = pd.read_csv(stage_h_path)
-                for _, row in stage_h_df.iterrows():
+                stage_h_annotations_df = pd.read_csv(stage_h_path)
+                for _, row in stage_h_annotations_df.iterrows():
                     cid = str(row.get('cluster_id', ''))
                     stage_h_lookup[cid] = row.to_dict()
                 logger.info(f'  Loaded {len(stage_h_lookup)} Stage H annotations for lvl0')
             except Exception as e:
                 logger.warning(f'  Failed to load Stage H annotations: {e}')
+
+        # Load Stage H decision_steps for hierarchical runner-up calculation
+        stage_h_steps_path = Path(stage_h_dir) / 'decision_steps.csv'
+        if stage_h_steps_path.exists():
+            try:
+                stage_h_decision_steps_df = pd.read_csv(stage_h_steps_path)
+                logger.info(f'  Loaded {len(stage_h_decision_steps_df)} Stage H decision steps')
+            except Exception as e:
+                logger.warning(f'  Failed to load Stage H decision steps: {e}')
+
+    # Combine Stage H and current iteration data for hierarchical runner-up
+    combined_annotations = pd.concat(
+        [df for df in [stage_h_annotations_df, cluster_annotations] if not df.empty],
+        ignore_index=True
+    ) if not stage_h_annotations_df.empty or not cluster_annotations.empty else cluster_annotations
+
+    # Combine decision_steps if provided
+    if decision_steps is not None and not decision_steps.empty:
+        combined_decision_steps = pd.concat(
+            [df for df in [stage_h_decision_steps_df, decision_steps] if not df.empty],
+            ignore_index=True
+        ) if not stage_h_decision_steps_df.empty else decision_steps
+    else:
+        combined_decision_steps = stage_h_decision_steps_df
 
     records = []
     for _, row in cluster_ann.iterrows():
@@ -1686,7 +1762,8 @@ def generate_enhanced_annotations_44col(
             'reason': _build_reason_string(row),
         }
 
-        # Add lvl0 columns (from Stage H or empty)
+        # Add lvl0 columns (from Stage H or explicit defaults)
+        # ISSUE-003l fix: use explicit defaults matching reference (-1, False)
         h_data = stage_h_lookup.get(origin_cluster, {})
         for col in HIER_COLS:
             src_col = _map_col_name_44(col)
@@ -1696,9 +1773,18 @@ def generate_enhanced_annotations_44col(
                 val = h_data.get('assigned_label', '')
             elif col == 'score':
                 val = h_data.get('assigned_score', 0.0)
-            record[f'{col}_lvl0'] = val if val != '' else (
-                0.0 if 'score' in col or 'confidence' in col or 'coverage' in col else ''
-            )
+
+            # Apply explicit defaults for missing values (matches reference)
+            if val == '' or (isinstance(val, float) and pd.isna(val)):
+                if col == 'assigned_level':
+                    val = -1
+                elif col in ('margin_is_infinite', 'stopped_before_leaf', 'is_ambiguous_root'):
+                    val = False
+                elif 'score' in col or 'confidence' in col or 'coverage' in col:
+                    val = 0.0
+                else:
+                    val = ''
+            record[f'{col}_lvl0'] = val
 
         # Add lvl1 columns (from current cluster_ann)
         for col in HIER_COLS:
@@ -1722,15 +1808,17 @@ def generate_enhanced_annotations_44col(
         )
         record['confidence_level'] = row.get('confidence_level', '')
 
-        # Add runner-up columns
-        runner_up_label, runner_up_score, gap = _get_runner_up_44(
+        # Add runner-up columns using hierarchical sibling-based algorithm
+        # ISSUE-003j fix: use get_hierarchical_runner_up instead of global top-2
+        runner_up_label, runner_up_score, gap = get_hierarchical_runner_up(
             cluster_id=cluster_id,
-            assigned_label=row.get('assigned_label', ''),
-            scores_df=scores_df,
+            decision_steps=combined_decision_steps,
+            cluster_annotations=combined_annotations,
+            marker_scores=scores_df,
         )
         record['runner_up_label'] = runner_up_label
-        record['runner_up_score'] = round(runner_up_score, 3)
-        record['gap'] = round(gap, 3)
+        record['runner_up_score'] = round(runner_up_score, 3) if not pd.isna(runner_up_score) else 0.0
+        record['gap'] = round(gap, 3) if not pd.isna(gap) else float('nan')
 
         records.append(record)
 
@@ -1772,11 +1860,20 @@ def run_review_exports(
     stage_h_dir: Optional[str] = None,
     marker_map_path: Optional[str] = None,
     input_path: Optional[str] = None,
+    # Workflow state parameters (for reference schema compatibility)
+    diagnose_complete: bool = True,
+    diagnostic_summary: Optional[Dict[str, int]] = None,
+    diagnostic_report_path: Optional[str] = None,
+    execute_complete: bool = True,
+    groups_executed: Optional[List[str]] = None,
+    groups_skipped: Optional[List[str]] = None,
+    final_output_path: Optional[str] = None,
     logger: Optional[logging.Logger] = None,
 ) -> Dict[str, Path]:
     """Run all review exports (composition, annotations, summary, workflow state).
 
     This is the high-level orchestrator that combines all review export functions.
+    Exports match reference schema from ft/src/workflow/stage_i_unified.py.
 
     Parameters
     ----------
@@ -1794,6 +1891,20 @@ def run_review_exports(
         Path to marker map for workflow state
     input_path : str, optional
         Path to input h5ad for workflow state
+    diagnose_complete : bool
+        Whether diagnose step is complete (default: True)
+    diagnostic_summary : Dict[str, int], optional
+        Summary counts {SUBCLUSTER: n, RELABEL: n, SKIP: n}
+    diagnostic_report_path : str, optional
+        Path to diagnostic_report.csv
+    execute_complete : bool
+        Whether execute step is complete (default: True)
+    groups_executed : List[str], optional
+        List of group names that were executed
+    groups_skipped : List[str], optional
+        List of group names that were skipped
+    final_output_path : str, optional
+        Path to refined_final.h5ad
     logger : logging.Logger, optional
         Logger instance
 
@@ -1826,6 +1937,16 @@ def run_review_exports(
 
     # Export cluster annotations from adata.uns if available (fast path)
     cluster_ann_key = 'cluster_annotations_subcluster'
+    decision_steps_key = 'decision_steps_subcluster'
+
+    # Extract decision_steps for hierarchical runner-up calculation (ISSUE-003j fix)
+    decision_steps_df = None
+    if decision_steps_key in adata.uns:
+        decision_steps_df = adata.uns[decision_steps_key]
+        if isinstance(decision_steps_df, dict):
+            decision_steps_df = pd.DataFrame(decision_steps_df)
+        logger.info(f'  Loaded {len(decision_steps_df)} decision steps from adata.uns')
+
     if cluster_ann_key in adata.uns:
         logger.info('Generating cluster annotations from stored data...')
         cluster_ann = adata.uns[cluster_ann_key].copy()
@@ -1901,10 +2022,11 @@ def run_review_exports(
                         cluster_ann['mean_positive_fraction'] = [round(v, 3) if pd.notna(v) else 0 for v in mpf_values]
 
         # Add confidence_level if not present
+        # ISSUE-003i fix: round score to 3 decimals before classifying to match reference behavior
         if 'confidence_level' not in cluster_ann.columns:
             cluster_ann['confidence_level'] = cluster_ann['assigned_score'].apply(
-                _classify_confidence_band
-            ).str.lower()
+                lambda x: _classify_confidence_band(round(float(x), 3) if pd.notna(x) else 0)
+            )
 
         # Reorder columns to match reference format
         ref_cols = [
@@ -1964,12 +2086,15 @@ def run_review_exports(
         )
 
         # Generate enhanced version with 44-column format
+        # Pass decision_steps for hierarchical runner-up calculation (ISSUE-003j fix)
         enhanced_df = generate_enhanced_annotations_44col(
             cluster_ann=cluster_ann,
             scores_df=scores_df,
             stage_h_dir=stage_h_dir,
             iteration=1,
             logger=logger,
+            decision_steps=decision_steps_df,
+            cluster_annotations=cluster_ann,
         )
         # Ensure consistent sort order
         if 'cluster_id' in enhanced_df.columns:
@@ -1994,19 +2119,66 @@ def run_review_exports(
             output_dir / 'cluster_annotations_enhanced.csv'
         )
 
-    # Export review summary
+    # Build workflow state dict (matches reference schema)
+    now = datetime.now().isoformat()
+    workflow_state_dict = {
+        'version': '1.0',
+        'marker_map_path': marker_map_path or '',
+        'input_path': input_path or '',
+        'stage_h_dir': stage_h_dir or '',
+        'out_dir': str(output_dir),
+        'created_at': now,
+        'updated_at': now,
+        # Annotate step (not tracked in review exports, set to False)
+        'annotate_complete': False,
+        'annotate_timestamp': None,
+        'annotate_output': None,
+        # Diagnose step
+        'diagnose_complete': diagnose_complete,
+        'diagnose_timestamp': now,
+        'diagnostic_summary': diagnostic_summary or {},
+        'diagnostic_report_path': diagnostic_report_path,
+        # Execute step
+        'execute_complete': execute_complete,
+        'execute_timestamp': now,
+        'groups_executed': groups_executed or [],
+        'groups_skipped': groups_skipped or [],
+        'final_output_path': final_output_path,
+        # Review step
+        'review_complete': True,
+        'review_timestamp': now,
+        # Iteration tracking
+        'iterations': [],
+        'current_iteration': 0,
+        'stopping_reason': None,
+    }
+
+    # Export review summary (with embedded workflow_state)
     comp_global = adata.obs[cell_type_col].value_counts()
     summary_path = export_review_summary(
-        adata, output_dir, cell_type_col, cluster_col, comp_global, logger
+        adata, output_dir, cell_type_col, cluster_col, comp_global,
+        workflow_state=workflow_state_dict,
+        logger=logger,
     )
     output_paths['review_summary'] = summary_path
 
-    # Export workflow state
+    # Export workflow state (with all fields)
     state_path = export_workflow_state(
         output_dir,
         marker_map_path=marker_map_path,
         input_path=input_path,
         stage_h_dir=stage_h_dir,
+        diagnose_complete=diagnose_complete,
+        diagnose_timestamp=now,
+        diagnostic_summary=diagnostic_summary,
+        diagnostic_report_path=diagnostic_report_path,
+        execute_complete=execute_complete,
+        execute_timestamp=now,
+        groups_executed=groups_executed,
+        groups_skipped=groups_skipped,
+        final_output_path=final_output_path,
+        review_complete=True,
+        review_timestamp=now,
         logger=logger,
     )
     output_paths['workflow_state'] = state_path
