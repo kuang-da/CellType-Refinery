@@ -24,6 +24,9 @@ from .assignment import annotate_obs
 from .gating import (
     DEFAULT_GATING_PARAMS,
     assign_labels_hierarchical,
+    merge_gating_params,
+    extract_gating_params_from_marker_map,
+    log_gating_params,
 )
 from .marker_loading import (
     MarkerSet,
@@ -148,6 +151,27 @@ class AnnotationEngine:
             self._marker_map = marker_map
             self._marker_map_path = None
 
+        # Extract gating params from marker map if present
+        self._marker_map_gating_params = extract_gating_params_from_marker_map(self._marker_map)
+        if self._marker_map_gating_params:
+            self.logger.info(
+                "[Stage H] Found _gating_params in marker map: %s",
+                list(self._marker_map_gating_params.keys())
+            )
+            # Log details of tissue-specific rules
+            if "root_hard_requirements" in self._marker_map_gating_params:
+                for root, req in self._marker_map_gating_params["root_hard_requirements"].items():
+                    self.logger.info(
+                        "  root_hard_requirements[%s]: marker=%s, min_pos_frac=%.2f",
+                        root, req.get("marker", "?"), req.get("min_pos_frac", 0)
+                    )
+            if "root_veto_markers" in self._marker_map_gating_params:
+                for root, veto in self._marker_map_gating_params["root_veto_markers"].items():
+                    self.logger.info(
+                        "  root_veto_markers[%s]: markers=%s, max_pos_frac=%.2f",
+                        root, veto.get("markers", []), veto.get("max_pos_frac", 0)
+                    )
+
     def run(
         self,
         adata: "sc.AnnData",
@@ -245,7 +269,23 @@ class AnnotationEngine:
 
         # 6. Hierarchical assignment
         self.logger.info("Phase 5: Hierarchical label assignment...")
-        gating_params = self.params.gating_params or DEFAULT_GATING_PARAMS
+
+        # Build gating params: explicit params > marker map params > defaults
+        if self.params.gating_params:
+            gating_params = self.params.gating_params
+            self.logger.info("  Using explicit gating_params from AnnotationParams")
+        elif self._marker_map_gating_params:
+            gating_params = merge_gating_params(
+                base=DEFAULT_GATING_PARAMS,
+                tissue_params=self._marker_map_gating_params
+            )
+            self.logger.info("  Using gating_params merged from marker map _gating_params")
+        else:
+            gating_params = DEFAULT_GATING_PARAMS
+            self.logger.info("  Using DEFAULT_GATING_PARAMS (no _gating_params in marker map)")
+
+        # Log full gating parameters for debugging
+        log_gating_params(gating_params, self.logger, "[Stage H]")
 
         cluster_annotations, decision_steps = assign_labels_hierarchical(
             marker_scores,
