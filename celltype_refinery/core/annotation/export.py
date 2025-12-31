@@ -1279,6 +1279,12 @@ def export_cluster_annotations_simple(
             lambda x: round(float(x), 3) if pd.notna(x) else x
         )
 
+    # Sort by cluster_id using reference sort key for consistent ordering
+    cluster_mapping = cluster_mapping.sort_values(
+        'cluster_id',
+        key=lambda x: x.map(lambda c: _sort_cluster_key(str(c)))
+    ).reset_index(drop=True)
+
     # Save cluster annotations (simple format)
     mapping_path = output_dir / 'cluster_annotations.csv'
     cluster_mapping.to_csv(mapping_path, index=False)
@@ -1304,6 +1310,12 @@ def export_cluster_annotations_simple(
         )
         if cluster_col != 'cluster_id':
             enhanced = enhanced.drop(columns=[cluster_col])
+
+    # Ensure consistent sort order (merge may change order)
+    enhanced = enhanced.sort_values(
+        'cluster_id',
+        key=lambda x: x.map(lambda c: _sort_cluster_key(str(c)))
+    ).reset_index(drop=True)
 
     enhanced_path = output_dir / 'cluster_annotations_enhanced.csv'
     enhanced.to_csv(enhanced_path, index=False)
@@ -1919,6 +1931,13 @@ def run_review_exports(
                     lambda x: round(float(x), 3) if pd.notna(x) else x
                 )
 
+        # Sort by cluster_id using reference sort key for consistent ordering
+        # (Handles subclusters: '1:0' -> (1, 0), deeper subclusters at end)
+        cluster_ann = cluster_ann.sort_values(
+            'cluster_id',
+            key=lambda x: x.map(lambda c: _sort_cluster_key(str(c)))
+        ).reset_index(drop=True)
+
         # Save cluster_annotations.csv (24 columns)
         stage_h_path = output_dir / 'cluster_annotations.csv'
         cluster_ann.to_csv(stage_h_path, index=False)
@@ -1936,6 +1955,12 @@ def run_review_exports(
             iteration=1,
             logger=logger,
         )
+        # Ensure consistent sort order
+        if 'cluster_id' in enhanced_df.columns:
+            enhanced_df = enhanced_df.sort_values(
+                'cluster_id',
+                key=lambda x: x.map(lambda c: _sort_cluster_key(str(c)))
+            ).reset_index(drop=True)
         enhanced_path = output_dir / 'cluster_annotations_enhanced.csv'
         enhanced_df.to_csv(enhanced_path, index=False)
         output_paths['cluster_annotations_enhanced'] = enhanced_path
