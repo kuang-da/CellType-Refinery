@@ -1274,6 +1274,11 @@ def export_cluster_annotations_simple(
         unassigned_mask = cluster_mapping['assigned_label'] == 'Unassigned'
         cluster_mapping.loc[unassigned_mask, 'assigned_score'] = 0.0
 
+        # Round assigned_score to 3 decimal places (ISSUE-003f fix)
+        cluster_mapping['assigned_score'] = cluster_mapping['assigned_score'].apply(
+            lambda x: round(float(x), 3) if pd.notna(x) else x
+        )
+
     # Save cluster annotations (simple format)
     mapping_path = output_dir / 'cluster_annotations.csv'
     cluster_mapping.to_csv(mapping_path, index=False)
@@ -1901,6 +1906,18 @@ def run_review_exports(
         ]
         final_cols = [c for c in ref_cols if c in cluster_ann.columns]
         cluster_ann = cluster_ann[final_cols]
+
+        # Round numeric columns to 3 decimal places to match reference precision
+        # (ISSUE-003f fix: reference rounds these columns for consistent output)
+        numeric_cols_to_round = [
+            'assigned_score', 'confidence', 'min_margin_along_path', 'coverage',
+            'mean_enrichment', 'mean_positive_fraction',
+        ]
+        for col in numeric_cols_to_round:
+            if col in cluster_ann.columns:
+                cluster_ann[col] = cluster_ann[col].apply(
+                    lambda x: round(float(x), 3) if pd.notna(x) else x
+                )
 
         # Save cluster_annotations.csv (24 columns)
         stage_h_path = output_dir / 'cluster_annotations.csv'
