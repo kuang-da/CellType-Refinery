@@ -175,7 +175,7 @@ def _setup_logging(
     console.setFormatter(console_fmt)
     logger.addHandler(console)
 
-    # File handler
+    # File handler (only if log_dir explicitly provided)
     if log_dir:
         log_dir.mkdir(parents=True, exist_ok=True)
         file_handler = logging.FileHandler(log_dir / DEFAULT_LOG_FILENAME)
@@ -900,7 +900,9 @@ def run_stage_i(
         return 1
 
     config = config or StageIRunConfig()
-    log_dir = log_dir or output_dir
+    # NOTE: log_dir no longer defaults to output_dir (ISSUE-003w)
+    # Log file only created if --log-dir explicitly specified.
+    # The launcher script handles logging via tee to timestamped files.
     logger = _setup_logging(log_dir, verbose)
 
     # -------------------------------------------------------------------------
@@ -1095,10 +1097,8 @@ def run_stage_i(
     logger.info("Execution plan: %s", merged_plan.summary())
     logger.info("Affected clusters: %s", merged_plan.get_affected_clusters())
 
-    # Export plan
-    plan_path = output_dir / "execution_plan.yaml"
-    export_plan(merged_plan, plan_path, format="yaml")
-    logger.info("Plan saved to: %s", plan_path)
+    # NOTE: execution_plan.yaml export removed (ISSUE-003w)
+    # The plan is logged above; file export not needed for iteration workflow.
 
     # Import DE runner if using within-parent strategy
     from .engine import default_scanpy_de_within_parent_runner
@@ -1156,20 +1156,15 @@ def run_stage_i(
     )
     store_provenance(adata, provenance)
 
-    # Write outputs
-    output_h5ad = output_dir / f"refined_v{provenance.iteration}.h5ad"
-    logger.info("Writing refined AnnData: %s", output_h5ad)
-    adata.write_h5ad(output_h5ad)
-
-    # Also write as refined_final.h5ad for chaining
+    # Write output
+    # NOTE: Versioned h5ad (refined_v{N}.h5ad) removed (ISSUE-003w)
+    # Only refined_final.h5ad is written for iteration chaining.
     final_path = output_dir / "refined_final.h5ad"
+    logger.info("Writing refined AnnData: %s", final_path)
     adata.write_h5ad(final_path)
-    logger.info("Written final output: %s", final_path)
 
-    # Export curation log
-    log_path = output_dir / "curation_log.json"
-    export_curation_log(merged_plan, result, provenance, log_path)
-    logger.info("Wrote curation log: %s", log_path)
+    # NOTE: curation_log.json export removed (ISSUE-003w)
+    # Provenance is stored in adata.uns; file export not needed for iteration.
 
     # Export mapping table
     mapping_path = output_dir / "cluster_label_mapping.csv"
@@ -1181,15 +1176,8 @@ def run_stage_i(
     export_annotations_csv(adata, annotations_export_path)
     logger.info("Wrote annotations: %s", annotations_export_path)
 
-    # Generate next iteration template
-    template_path = output_dir / "next_iteration_template.yaml"
-    generate_next_iteration_template(
-        adata,
-        template_path,
-        label_key=config.label_key_out,
-        current_iteration=provenance.iteration,
-    )
-    logger.info("Wrote next iteration template: %s", template_path)
+    # NOTE: next_iteration_template.yaml export removed (ISSUE-003w)
+    # Manual curation templates not needed for automated iteration workflow.
 
     # Summary
     logger.info("")
@@ -1201,7 +1189,7 @@ def run_stage_i(
     logger.info("  Operations: %s", result.operations_executed)
     logger.info("  Subclusters created: %s", result.subclusters_created)
     logger.info("  Execution time: %.2f seconds", result.execution_time_seconds)
-    logger.info("  Output: %s", output_h5ad)
+    logger.info("  Output: %s", final_path)
 
     return 0
 
@@ -1418,7 +1406,7 @@ Examples:
         "--log-dir",
         type=Path,
         default=None,
-        help="Directory for log files (default: output directory).",
+        help="Directory for log files. If not specified, logs only to stdout.",
     )
     parser.add_argument(
         "--verbose",
