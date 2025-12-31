@@ -300,9 +300,11 @@ class BatchCorrector:
             index="sample_id", columns="marker", values="intensity"
         )
 
-        # Get metadata indexed by sample
-        meta_cols = [batch_col, biovar_col] + self.config.additional_batch_factors
-        metadata = summary_df[["sample_id"] + meta_cols].drop_duplicates()
+        # Get metadata indexed by sample (only sample-level columns, not per-marker factors)
+        # Note: additional_batch_factors like imaging_color/cycle vary per marker, so we
+        # only use batch_col and biovar_col for the per-marker ANOVA here.
+        sample_meta_cols = [batch_col, biovar_col]
+        metadata = summary_df[["sample_id"] + sample_meta_cols].drop_duplicates(subset=["sample_id"])
         metadata = metadata.set_index("sample_id")
 
         records = []
