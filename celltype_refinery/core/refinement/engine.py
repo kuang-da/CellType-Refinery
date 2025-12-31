@@ -147,6 +147,180 @@ def default_scanpy_de_runner(
     return de_lookup
 
 
+def default_scanpy_de_within_parent_runner(
+    adata: "sc.AnnData",
+    subcluster_key: str = "cluster_lvl1",
+    parent_key: str = "cluster_lvl0",
+    method: str = "wilcoxon",
+    n_genes: int = 20,
+    n_workers: int = 8,
+    layer: Optional[str] = None,
+    tie_correct: bool = True,
+    logger: Optional[logging.Logger] = None,
+    subclustered_parents: Optional[List[str]] = None,
+) -> Dict[str, List[str]]:
+    """Within-parent DE runner: compare subclusters within each parent cluster.
+
+    This is biologically appropriate for subclustering:
+    - "3:0" is compared against "3:1" + "3:2" (not entire dataset)
+    - Much faster: ~100K cells vs 3.4M cells
+    - Parallelizable: each parent is independent
+
+    Parameters
+    ----------
+    adata : sc.AnnData
+        AnnData with cluster annotations
+    subcluster_key : str
+        Column with subcluster IDs (e.g., "3:0", "3:1")
+    parent_key : str
+        Column with parent cluster IDs (unused, kept for API compat)
+    method : str
+        DE method (default: "wilcoxon")
+    n_genes : int
+        Number of top DE genes per cluster
+    n_workers : int
+        Number of parallel workers
+    layer : str, optional
+        Data layer to use
+    tie_correct : bool
+        Apply tie correction for Wilcoxon
+    logger : logging.Logger
+        Logger instance
+    subclustered_parents : List[str], optional
+        List of parent cluster IDs that were subclustered in this iteration.
+        If provided, only these parents will be processed for DE.
+
+    Returns
+    -------
+    Dict[str, List[str]]
+        Mapping from subcluster ID to list of top DE genes
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import threading
+
+    if logger is None:
+        logger = logging.getLogger(__name__)
+
+    # Identify parent clusters that have subclusters
+    subcluster_ids = adata.obs[subcluster_key].astype(str).unique()
+    all_parents_with_subclusters = set()
+    for sc_id in subcluster_ids:
+        if ":" in sc_id:
+            parts = sc_id.split(":")
+            parent = ":".join(parts[:-1])
+            all_parents_with_subclusters.add(parent)
+
+    # Filter to only subclustered parents if provided
+    if subclustered_parents is not None and len(subclustered_parents) > 0:
+        subclustered_set = set(str(p) for p in subclustered_parents)
+        parents_with_subclusters = all_parents_with_subclusters & subclustered_set
+        n_skipped = len(all_parents_with_subclusters) - len(parents_with_subclusters)
+        if n_skipped > 0:
+            logger.info(
+                "Filtered to %d newly-subclustered parents (skipping %d unchanged)",
+                len(parents_with_subclusters), n_skipped
+            )
+    else:
+        parents_with_subclusters = all_parents_with_subclusters
+
+    n_parents = len(parents_with_subclusters)
+    if n_parents == 0:
+        logger.info("No subclusters found (no ':' in cluster IDs), falling back to global DE")
+        return default_scanpy_de_runner(
+            adata, subcluster_key, method, n_genes, layer
+        )
+
+    logger.info(
+        "Within-parent DE: %d parent clusters with subclusters, %d workers",
+        n_parents, n_workers
+    )
+
+    all_results: Dict[str, List[str]] = {}
+    results_lock = threading.Lock()
+    completed_count = [0]
+
+    def process_parent(parent_id: str) -> Tuple[Dict[str, List[str]], str, int, float]:
+        """Run DE for one parent cluster's subclusters."""
+        try:
+            # Extract cells for this parent
+            parent_mask = adata.obs[subcluster_key].astype(str).str.startswith(f"{parent_id}:")
+            n_cells = parent_mask.sum()
+
+            if n_cells < 100:
+                return {}, parent_id, n_cells, 0.0
+
+            # Create subset AnnData
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=pd.errors.SettingWithCopyWarning)
+                warnings.filterwarnings("ignore", message=".*SettingWithCopyWarning.*")
+                parent_adata = adata[parent_mask].copy()
+
+            # Check we have at least 2 subclusters
+            subclusters_in_parent = parent_adata.obs[subcluster_key].astype(str).unique()
+            if len(subclusters_in_parent) < 2:
+                return {}, parent_id, n_cells, 0.0
+
+            # Run DE within this parent
+            start = time.time()
+            sc.tl.rank_genes_groups(
+                parent_adata,
+                groupby=subcluster_key,
+                method=method,
+                n_genes=n_genes,
+                layer=layer if layer and layer in parent_adata.layers else None,
+                use_raw=False,
+                tie_correct=tie_correct,
+                pts=True,
+            )
+            elapsed = time.time() - start
+
+            # Extract results
+            result = {}
+            for sc_id in subclusters_in_parent:
+                try:
+                    df = sc.get.rank_genes_groups_df(parent_adata, group=str(sc_id))
+                    df = df.dropna(subset=["names"])
+                    result[str(sc_id)] = df.head(n_genes)["names"].astype(str).tolist()
+                except Exception:
+                    result[str(sc_id)] = []
+
+            return result, parent_id, n_cells, elapsed
+
+        except Exception as e:
+            if logger:
+                logger.warning("DE failed for parent %s: %s", parent_id, e)
+            return {}, parent_id, 0, 0.0
+
+    # Process parents in parallel
+    start_total = time.time()
+
+    with ThreadPoolExecutor(max_workers=n_workers) as executor:
+        futures = {executor.submit(process_parent, p): p for p in parents_with_subclusters}
+
+        for future in as_completed(futures):
+            result, parent_id, n_cells, elapsed = future.result()
+            with results_lock:
+                all_results.update(result)
+                completed_count[0] += 1
+                if elapsed > 0:
+                    logger.info(
+                        "DE parent %s: %d cells, %.1fs (%d/%d)",
+                        parent_id, n_cells, elapsed, completed_count[0], n_parents
+                    )
+
+    # Handle non-subclustered clusters
+    non_subclustered = [c for c in subcluster_ids if ":" not in c]
+    if non_subclustered:
+        logger.info("Adding %d non-subclustered clusters (no DE needed)", len(non_subclustered))
+        for cluster_id in non_subclustered:
+            all_results[str(cluster_id)] = []
+
+    total_elapsed = time.time() - start_total
+    logger.info("Within-parent DE complete: %d clusters, %.1f sec total", len(all_results), total_elapsed)
+
+    return all_results
+
+
 @dataclass
 class EngineResult:
     """Result of RefinementEngine execution."""
@@ -206,6 +380,8 @@ class RefinementEngine:
         de_tie_correct: bool = True,
         de_workers: int = 8,
         de_within_parent: bool = True,
+        # Scoring layer (for marker score computation)
+        scoring_layer: str = "batchcorr",
         # Rank-weighted DE bonus parameters
         de_commonness_alpha: float = 0.5,
         de_top_frac: float = 0.2,
@@ -217,6 +393,7 @@ class RefinementEngine:
         n_workers: int = 1,
         scoring_workers: int = 1,
         scoring_batch_size: int = 50,
+        gating_workers: int = 1,
     ):
         """Initialize RefinementEngine.
 
@@ -276,6 +453,8 @@ class RefinementEngine:
             Number of parallel workers for marker scoring (default: 1)
         scoring_batch_size : int
             Number of clusters per worker batch for scoring (default: 50)
+        gating_workers : int
+            Number of parallel workers for hierarchical gating (default: 1)
         """
         self.marker_map = marker_map
         self.label_key_out = label_key_out
@@ -303,6 +482,7 @@ class RefinementEngine:
         self.de_tie_correct = de_tie_correct
         self.de_workers = de_workers
         self.de_within_parent = de_within_parent
+        self.scoring_layer = scoring_layer
 
         # Rank-weighted DE bonus parameters
         self.de_commonness_alpha = de_commonness_alpha
@@ -317,6 +497,7 @@ class RefinementEngine:
         self.n_workers = n_workers
         self.scoring_workers = scoring_workers
         self.scoring_batch_size = scoring_batch_size
+        self.gating_workers = gating_workers
 
         # Track state during execution
         self._subclustered_clusters: List[str] = []
@@ -351,16 +532,97 @@ class RefinementEngine:
             DEFAULT_GATING_PARAMS,
             build_de_rank_lookup,
             compute_marker_idf,
+            merge_gating_params,
+            extract_gating_params_from_marker_map,
+            log_gating_params,
         )
 
         self._compute_marker_scores = compute_marker_scores
         self._compute_marker_scores_parallel = compute_marker_scores_parallel
         self._load_marker_sets = load_marker_sets
         self._assign_labels_hierarchical = assign_labels_hierarchical
-        self._DEFAULT_GATING_PARAMS = DEFAULT_GATING_PARAMS
         self._build_de_rank_lookup = build_de_rank_lookup
         self._compute_marker_idf = compute_marker_idf
+        self._merge_gating_params = merge_gating_params
+        self._extract_gating_params_from_marker_map = extract_gating_params_from_marker_map
+        self._log_gating_params = log_gating_params
+
+        # Build gating params: base defaults + marker map tissue-specific rules
+        self._DEFAULT_GATING_PARAMS = self._build_gating_params(DEFAULT_GATING_PARAMS)
         self._scoring_loaded = True
+
+    def _build_gating_params(self, default_params: Dict[str, Any]) -> Dict[str, Any]:
+        """Build gating params by merging defaults with marker map tissue-specific rules.
+
+        Priority (lowest to highest):
+        1. default_params (from annotation module, includes FT defaults for backward compat)
+        2. marker_map._gating_params (tissue-specific from marker map)
+
+        Parameters
+        ----------
+        default_params : dict
+            Default gating parameters from annotation module
+
+        Returns
+        -------
+        dict
+            Merged gating parameters
+        """
+        # If no marker map, use defaults
+        if self.marker_map is None:
+            return default_params
+
+        # Load marker map if it's a path
+        marker_map_dict = None
+        if isinstance(self.marker_map, (str, Path)):
+            try:
+                import json
+                with open(self.marker_map, "r") as f:
+                    marker_map_dict = json.load(f)
+            except Exception as e:
+                self.logger.warning("Failed to load marker map for gating params: %s", e)
+                return default_params
+        elif isinstance(self.marker_map, dict):
+            marker_map_dict = self.marker_map
+
+        if marker_map_dict is None:
+            return default_params
+
+        # Extract tissue-specific gating params from marker map
+        tissue_params = self._extract_gating_params_from_marker_map(marker_map_dict)
+
+        if tissue_params:
+            self.logger.info(
+                "[Stage I] Found _gating_params in marker map: %s",
+                list(tissue_params.keys())
+            )
+            # Log details of tissue-specific rules
+            if "root_hard_requirements" in tissue_params:
+                for root, req in tissue_params["root_hard_requirements"].items():
+                    self.logger.info(
+                        "  root_hard_requirements[%s]: marker=%s, min_pos_frac=%.2f",
+                        root, req.get("marker", "?"), req.get("min_pos_frac", 0)
+                    )
+            if "root_veto_markers" in tissue_params:
+                for root, veto in tissue_params["root_veto_markers"].items():
+                    self.logger.info(
+                        "  root_veto_markers[%s]: markers=%s, max_pos_frac=%.2f",
+                        root, veto.get("markers", []), veto.get("max_pos_frac", 0)
+                    )
+            # Merge: defaults < tissue_params
+            self.logger.info("  Merging with DEFAULT_GATING_PARAMS")
+            merged_params = self._merge_gating_params(
+                base=default_params,
+                tissue_params=tissue_params
+            )
+            # Log full merged gating parameters
+            self._log_gating_params(merged_params, self.logger, "[Stage I]")
+            return merged_params
+
+        self.logger.info("[Stage I] No _gating_params in marker map, using DEFAULT_GATING_PARAMS")
+        # Log full default gating parameters
+        self._log_gating_params(default_params, self.logger, "[Stage I]")
+        return default_params
 
     def execute(self, adata: "sc.AnnData", plan: RefinePlan) -> "sc.AnnData":
         """Execute RefinePlan operations on AnnData.
@@ -999,6 +1261,11 @@ class RefinementEngine:
 
             new_subset.obs["cluster_lvl0"] = new_subset.obs[cluster_key]
 
+            # Determine scoring layer (use batchcorr/stage_h_input if available)
+            use_layer = self.scoring_layer if self.scoring_layer in new_subset.layers else None
+            if use_layer:
+                self.logger.info("Using layer '%s' for subcluster scoring", use_layer)
+
             if self.expand_markers:
                 new_scores, new_marker_evidence = self._compute_marker_scores_parallel(
                     new_subset,
@@ -1015,6 +1282,7 @@ class RefinementEngine:
                     de_commonness_alpha=self.de_commonness_alpha,
                     n_workers=self.scoring_workers,
                     batch_size=self.scoring_batch_size,
+                    layer=use_layer,
                 )
             else:
                 new_scores = self._compute_marker_scores_parallel(
@@ -1032,6 +1300,7 @@ class RefinementEngine:
                     de_commonness_alpha=self.de_commonness_alpha,
                     n_workers=self.scoring_workers,
                     batch_size=self.scoring_batch_size,
+                    layer=use_layer,
                 )
             self.logger.info("Computed %d new score records", len(new_scores))
         else:
@@ -1060,6 +1329,11 @@ class RefinementEngine:
 
         cluster_key = self._cluster_col
 
+        # Determine scoring layer (use batchcorr/stage_h_input if available)
+        use_layer = self.scoring_layer if self.scoring_layer in adata.layers else None
+        if use_layer:
+            self.logger.info("Using layer '%s' for marker scoring", use_layer)
+
         if self.expand_markers:
             scores, marker_evidence = self._compute_marker_scores_parallel(
                 adata,
@@ -1076,6 +1350,7 @@ class RefinementEngine:
                 de_commonness_alpha=self.de_commonness_alpha,
                 n_workers=self.scoring_workers,
                 batch_size=self.scoring_batch_size,
+                layer=use_layer,
             )
             if marker_evidence is not None and not marker_evidence.empty:
                 marker_evidence = _sanitize_df_for_h5ad(marker_evidence)
@@ -1096,6 +1371,7 @@ class RefinementEngine:
                 de_commonness_alpha=self.de_commonness_alpha,
                 n_workers=self.scoring_workers,
                 batch_size=self.scoring_batch_size,
+                layer=use_layer,
             )
 
         self.logger.info("Computed %d total score records", len(scores))
@@ -1120,6 +1396,7 @@ class RefinementEngine:
             layer=None,
             params=self._DEFAULT_GATING_PARAMS,
             logger=self.logger,
+            n_workers=self.gating_workers,
         )
 
         if cluster_assignments.empty:
@@ -1134,7 +1411,7 @@ class RefinementEngine:
             cluster_assignments = _sanitize_df_for_h5ad(cluster_assignments)
             adata.uns["cluster_annotations_subcluster"] = cluster_assignments
 
-        # Build mappings
+        # Build mappings: cluster_id -> (assigned_label, reason_string)
         label_mapping = {}
         reason_mapping = {}
 
@@ -1142,9 +1419,34 @@ class RefinementEngine:
             cid = str(row["cluster_id"])
             label_mapping[cid] = row["assigned_label"]
 
+            # Build meaningful reason from scoring metadata (reference format)
             score = row.get("assigned_score", 0)
             confidence = row.get("confidence", 0)
-            reason_mapping[cid] = f"score={score:.2f}, margin={confidence:.2f}"
+            root = row.get("root_label", "")
+            stop_reason = row.get("stop_reason", "")
+            assigned_label = row["assigned_label"]
+
+            # Format reason based on stop_reason and hierarchy
+            if stop_reason == "ambiguous_root":
+                reason_mapping[cid] = f"Ambiguous roots (gap={confidence:.2f})"
+            elif stop_reason == "ambiguous_siblings":
+                reason_mapping[cid] = f"Mixed population (score={score:.2f})"
+            elif stop_reason == "no_root_passed":
+                # Include detailed fail reasons if available (e.g., veto info)
+                root_fail_reasons = row.get("root_fail_reasons", "")
+                if root_fail_reasons:
+                    reason_mapping[cid] = f"No root gate passed: {root_fail_reasons}"
+                else:
+                    reason_mapping[cid] = "No root gate passed"
+            elif stop_reason == "no_child_passed":
+                # Stopped at parent level
+                reason_mapping[cid] = f"score={score:.2f}, margin={confidence:.2f}"
+            elif root and root != assigned_label and "~" not in root:
+                # Hierarchical descent: root -> subtype
+                reason_mapping[cid] = f"{root} -> {assigned_label} (score={score:.2f}, margin={confidence:.2f})"
+            else:
+                # Default: just score and margin
+                reason_mapping[cid] = f"score={score:.2f}, margin={confidence:.2f}"
 
         # Convert categorical columns to string
         if hasattr(adata.obs[self._label_col], "cat"):

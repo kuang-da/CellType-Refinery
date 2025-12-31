@@ -7,6 +7,7 @@ This module provides tools for iterative refinement of cell-type annotations:
 - AutoPolicy/ManualPolicy: Generate plans from criteria or YAML config
 - InputAdapter: Normalize column names across different input formats
 - Parallel subclustering for performance
+- Cluster metrics for heterogeneity-based refinement decisions
 
 Example workflow:
     >>> from celltype_refinery.core.refinement import (
@@ -101,6 +102,12 @@ from .policies import (
     ManualPolicyConfig,
 )
 
+# Cluster metrics for heterogeneity detection
+from .cluster_metrics import (
+    compute_cluster_marker_heterogeneity,
+    merge_heterogeneity_with_annotations,
+)
+
 __all__ = [
     # Plan classes
     "RefineOp",
@@ -153,4 +160,7 @@ __all__ = [
     "AutoPolicyConfig",
     "ManualPolicy",
     "ManualPolicyConfig",
+    # Cluster metrics
+    "compute_cluster_marker_heterogeneity",
+    "merge_heterogeneity_with_annotations",
 ]
