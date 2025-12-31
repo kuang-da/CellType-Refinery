@@ -46,10 +46,12 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import pandas as pd
+import yaml
 
 try:
     import scanpy as sc
@@ -59,6 +61,73 @@ except ImportError:
 from .engine import DiagnosticEngine
 from .criteria import CriteriaConfig
 from ..refinement.cluster_metrics import compute_cluster_marker_heterogeneity
+
+
+# =============================================================================
+# Helper functions for groups export
+# =============================================================================
+
+
+def derive_root_label(assigned_label: str) -> str:
+    """Extract root label from hierarchical assignment.
+
+    Handles hierarchical labels like "Epithelium→Ciliated" by extracting
+    the first (root) component. Hybrid labels with "~" are kept as-is.
+
+    Parameters
+    ----------
+    assigned_label : str
+        The assigned cell type label (may be hierarchical or hybrid)
+
+    Returns
+    -------
+    str
+        The root label (first component before "→", or original if no "→")
+
+    Examples
+    --------
+    >>> derive_root_label("Epithelium→Ciliated")
+    'Epithelium'
+    >>> derive_root_label("Epithelium")
+    'Epithelium'
+    >>> derive_root_label("Endo~Mesen")
+    'Endo~Mesen'
+    >>> derive_root_label("Unassigned")
+    'Unassigned'
+    """
+    if pd.isna(assigned_label) or assigned_label == "Unassigned":
+        return "Unassigned"
+    # Split on "→" and take first part
+    parts = str(assigned_label).split("→")
+    return parts[0]
+
+
+def is_ambiguous_root(assigned_label: str) -> bool:
+    """Check if label indicates hybrid/ambiguous root.
+
+    Hybrid labels contain "~" to indicate multiple possible lineages
+    (e.g., "Endo~Mesen" for Endothelium~Mesenchymal hybrid).
+
+    Parameters
+    ----------
+    assigned_label : str
+        The assigned cell type label
+
+    Returns
+    -------
+    bool
+        True if label contains "~" (hybrid marker)
+
+    Examples
+    --------
+    >>> is_ambiguous_root("Endo~Mesen")
+    True
+    >>> is_ambiguous_root("Epithelium")
+    False
+    >>> is_ambiguous_root("Epithelium→Ciliated")
+    False
+    """
+    return "~" in str(assigned_label)
 
 
 def setup_logging(log_level: str = "INFO") -> logging.Logger:
@@ -80,6 +149,69 @@ def setup_logging(log_level: str = "INFO") -> logging.Logger:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
     return logging.getLogger(__name__)
+
+
+def update_workflow_state(
+    output_dir: Path,
+    diagnostic_summary: Dict[str, int],
+    diagnostic_report_path: str,
+    logger: Optional[logging.Logger] = None,
+) -> None:
+    """Update workflow_state.yaml with diagnostic summary.
+
+    This function loads the existing workflow_state.yaml (if present),
+    updates the diagnose-related fields, and saves the file. This ensures
+    the workflow state has accurate diagnostic_summary counts after the
+    diagnose step runs.
+
+    Matches reference behavior in ft/src/workflow/state.py:mark_diagnose_complete()
+
+    Parameters
+    ----------
+    output_dir : Path
+        Output directory containing workflow_state.yaml
+    diagnostic_summary : Dict[str, int]
+        Summary counts {"SUBCLUSTER": n, "RELABEL": n, "SKIP": n}
+    diagnostic_report_path : str
+        Path to the diagnostic_report.csv file
+    logger : logging.Logger, optional
+        Logger instance for output
+    """
+    state_path = output_dir / "workflow_state.yaml"
+
+    # Load existing state or create minimal structure
+    if state_path.exists():
+        try:
+            with open(state_path) as f:
+                state = yaml.safe_load(f) or {}
+        except Exception as e:
+            if logger:
+                logger.warning("Failed to load workflow_state.yaml: %s", e)
+            state = {}
+    else:
+        # Create minimal state structure (matches reference schema)
+        state = {
+            "version": "1.0",
+            "out_dir": str(output_dir),
+            "created_at": datetime.now().isoformat(),
+        }
+
+    # Update diagnose-related fields (matches reference mark_diagnose_complete)
+    state["diagnose_complete"] = True
+    state["diagnose_timestamp"] = datetime.now().isoformat()
+    state["diagnostic_summary"] = diagnostic_summary
+    state["diagnostic_report_path"] = diagnostic_report_path
+    state["updated_at"] = datetime.now().isoformat()
+
+    # Save updated state
+    try:
+        with open(state_path, "w") as f:
+            yaml.safe_dump(state, f, default_flow_style=False, sort_keys=False)
+        if logger:
+            logger.info("Updated workflow_state.yaml with diagnostic summary")
+    except Exception as e:
+        if logger:
+            logger.warning("Failed to update workflow_state.yaml: %s", e)
 
 
 def parse_args(args=None) -> argparse.Namespace:
@@ -174,6 +306,19 @@ Examples:
         type=str,
         default="diagnostic_report.csv",
         help="Name for output report file (default: diagnostic_report.csv)",
+    )
+
+    # Groups export options (for workflow integration)
+    parser.add_argument(
+        "--export-groups",
+        action="store_true",
+        help="Export groups_derived.yaml and groups/ directory structure after diagnosis",
+    )
+    parser.add_argument(
+        "--marker-map",
+        type=Path,
+        default=None,
+        help="Path to marker map JSON (for groups_derived.yaml metadata)",
     )
 
     # Logging
@@ -281,6 +426,20 @@ def main(args=None) -> int:
         logger.error("Missing columns in marker_scores: %s", missing_score)
         return 1
 
+    # Derive root_label and is_ambiguous_root if needed (for --export-groups)
+    if parsed.export_groups:
+        if "root_label" not in cluster_annotations.columns:
+            cluster_annotations["root_label"] = cluster_annotations["assigned_label"].apply(
+                derive_root_label
+            )
+            logger.info("Derived root_label column from assigned_label")
+
+        if "is_ambiguous_root" not in cluster_annotations.columns:
+            cluster_annotations["is_ambiguous_root"] = cluster_annotations["assigned_label"].apply(
+                is_ambiguous_root
+            )
+            logger.info("Derived is_ambiguous_root column from assigned_label")
+
     # Create diagnostic engine
     config = CriteriaConfig(
         min_cells=parsed.min_cells,
@@ -357,6 +516,63 @@ def main(args=None) -> int:
         n_blocked = diagnostic_report["is_blocked_by_size"].sum()
         if n_blocked > 0:
             logger.info("Note: %d clusters blocked by min_cells=%d", n_blocked, parsed.min_cells)
+
+    # Update workflow_state.yaml with diagnostic summary
+    # This ensures the state file has correct counts after diagnose runs
+    # (matches reference behavior in ft/src/workflow/state.py:mark_diagnose_complete)
+    diagnostic_summary = {
+        "SUBCLUSTER": int(rec_counts.get("SUBCLUSTER", 0)),
+        "RELABEL": int(rec_counts.get("RELABEL", 0)),
+        "SKIP": int(rec_counts.get("SKIP", 0)),
+    }
+    update_workflow_state(
+        output_dir=output_dir,
+        diagnostic_summary=diagnostic_summary,
+        diagnostic_report_path=str(report_path),
+        logger=logger,
+    )
+
+    # Export groups structure if requested (--export-groups)
+    # This generates groups_derived.yaml and groups/ directory with cluster_label_mapping.csv
+    # Using FRESH diagnostic_report ensures subcluster_ids are correctly populated
+    if parsed.export_groups:
+        logger.info("")
+        logger.info("Exporting groups structure...")
+
+        try:
+            from ..annotation.export import export_groups_structure
+            from ..refinement.__main__ import export_mapping_table
+
+            # ISSUE-003t fix: Use export_mapping_table to generate cluster_label_mapping
+            # with the correct schema: cluster_id, cell_type, n_cells, reason
+            # This matches the reference implementation in ft/src/refinement/export.py
+            # The reason column comes from curation_reason in adata.obs (most common per cluster)
+            cluster_label_mapping = export_mapping_table(
+                adata,
+                output_path=output_dir / "cluster_label_mapping.csv",
+                label_key="cell_type_lvl1",
+                reason_key="curation_reason",
+            )
+
+            result = export_groups_structure(
+                cluster_annotations=cluster_annotations,
+                cluster_label_mapping=cluster_label_mapping,
+                output_dir=output_dir,
+                diagnostic_report=diagnostic_report,  # FRESH data - correct IDs!
+                marker_map_path=str(parsed.marker_map) if parsed.marker_map else None,
+                iteration=1,
+                logger=logger,
+            )
+
+            logger.info(
+                "Groups exported: %d groups → %s",
+                result["n_groups"],
+                result["groups_derived_path"],
+            )
+        except Exception as e:
+            logger.error("Failed to export groups structure: %s", e)
+            # Non-fatal - continue even if groups export fails
+            logger.warning("Continuing without groups export")
 
     return 0
 

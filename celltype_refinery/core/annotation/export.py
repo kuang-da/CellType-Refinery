@@ -13,15 +13,24 @@ Key Functions:
 - export_workflow_state: Export workflow state YAML
 - generate_enhanced_annotations_44col: Create 44-column format from 24-col input
 - run_review_exports: High-level orchestrator for review exports
+
+Group Structure Export (NEW):
+- GroupConfig: Configuration for lineage grouping (customizable group order)
+- ClusterGroup: Data class representing a group of clusters by lineage
+- build_groups_from_annotations: Derive groups from root_label column
+- export_groups_structure: Create groups/ directory with per-group mappings
+- export_groups_derived_yaml: Export groups_derived.yaml configuration
+- summarize_groups: Format group summary for logging
 """
 
 from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Set, Tuple, TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -50,6 +59,567 @@ LINEAGE_GROUPS = {
     ],
     'Unassigned': ['Unassigned'],
 }
+
+# Default group ordering for review consistency (common tissue lineages)
+DEFAULT_GROUP_ORDER: List[str] = [
+    "Epithelium",
+    "Endothelium",
+    "Mesenchymal Cells",
+    "Immune Cells",
+    "Hybrids",
+    "Unassigned",
+]
+
+
+# =============================================================================
+# Group Configuration and Data Classes
+# =============================================================================
+
+
+@dataclass
+class GroupConfig:
+    """Configuration for lineage grouping.
+
+    Allows customization of group ordering and naming conventions for
+    different tissue types. Default configuration matches common spatial
+    biology tissue lineages.
+
+    Attributes
+    ----------
+    group_order : List[str]
+        Ordered list of group names for consistent output ordering.
+        Groups not in this list will be appended at the end.
+    hybrid_group_name : str
+        Name for the group containing ambiguous/hybrid clusters.
+    unassigned_group_name : str
+        Name for the group containing unassigned clusters.
+    normalize_names : bool
+        Whether to normalize group names (lowercase, replace spaces with underscores).
+
+    Examples
+    --------
+    >>> config = GroupConfig()
+    >>> config.group_order
+    ['Epithelium', 'Endothelium', 'Mesenchymal Cells', 'Immune Cells', 'Hybrids', 'Unassigned']
+
+    >>> # Custom ordering for a specific tissue
+    >>> config = GroupConfig(group_order=['Neurons', 'Glia', 'Immune Cells', 'Unassigned'])
+    """
+
+    group_order: List[str] = field(default_factory=lambda: DEFAULT_GROUP_ORDER.copy())
+    hybrid_group_name: str = "Hybrids"
+    unassigned_group_name: str = "Unassigned"
+    normalize_names: bool = True
+
+    def get_dir_name(self, index: int, group_name: str) -> str:
+        """Generate directory name for a group.
+
+        Parameters
+        ----------
+        index : int
+            1-based index of the group
+        group_name : str
+            Name of the group
+
+        Returns
+        -------
+        str
+            Directory name like 'g1_epithelium'
+        """
+        if self.normalize_names:
+            safe_name = group_name.lower().replace(' ', '_').replace('-', '_')
+        else:
+            safe_name = group_name.replace(' ', '_')
+        return f"g{index}_{safe_name}"
+
+
+@dataclass
+class ClusterGroup:
+    """A group of clusters organized by lineage.
+
+    Represents clusters that share a common root lineage (e.g., all Epithelium
+    clusters) for organized review and processing.
+
+    Attributes
+    ----------
+    name : str
+        Group name (e.g., "Epithelium", "Hybrids")
+    cluster_ids : Set[str]
+        All cluster IDs in this group
+    focus_label : str
+        Label to use for focused processing (same as name for non-hybrids)
+    subcluster_ids : Set[str]
+        Only clusters with SUBCLUSTER recommendation (subset of cluster_ids)
+    n_cells : int
+        Total cells across all clusters in this group
+
+    Examples
+    --------
+    >>> group = ClusterGroup(name="Epithelium", cluster_ids={"0", "1", "5"})
+    >>> group.n_clusters
+    3
+    >>> group.has_work
+    False  # No subclusters defined yet
+    """
+
+    name: str
+    cluster_ids: Set[str] = field(default_factory=set)
+    focus_label: str = ""
+    subcluster_ids: Set[str] = field(default_factory=set)
+    n_cells: int = 0
+
+    def __post_init__(self):
+        if not self.focus_label:
+            self.focus_label = self.name
+
+    @property
+    def has_work(self) -> bool:
+        """Return True if there are clusters to subcluster."""
+        return len(self.subcluster_ids) > 0
+
+    @property
+    def n_clusters(self) -> int:
+        """Return number of clusters in this group."""
+        return len(self.cluster_ids)
+
+    @property
+    def n_subcluster(self) -> int:
+        """Return number of clusters to subcluster."""
+        return len(self.subcluster_ids)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for YAML/JSON export."""
+        return {
+            "name": self.name,
+            "cluster_ids": sorted(self.cluster_ids),
+            "focus_label": self.focus_label,
+            "subcluster_ids": sorted(self.subcluster_ids),
+            "n_clusters": self.n_clusters,
+            "n_subcluster": self.n_subcluster,
+            "n_cells": self.n_cells,
+        }
+
+
+# =============================================================================
+# Group Building Functions
+# =============================================================================
+
+
+def get_root_group(
+    row: pd.Series,
+    config: Optional[GroupConfig] = None,
+) -> str:
+    """Map a cluster annotation row to its group name.
+
+    Uses the is_ambiguous_root column to identify hybrids, otherwise
+    uses the root_label column directly.
+
+    Parameters
+    ----------
+    row : pd.Series
+        A row from cluster_annotations DataFrame.
+        Expected columns: root_label, is_ambiguous_root (optional)
+    config : GroupConfig, optional
+        Group configuration. Uses defaults if not provided.
+
+    Returns
+    -------
+    str
+        Group name (one of the configured group names)
+
+    Examples
+    --------
+    >>> row = pd.Series({'is_ambiguous_root': True, 'root_label': 'Endo~Mesen'})
+    >>> get_root_group(row)
+    'Hybrids'
+
+    >>> row = pd.Series({'is_ambiguous_root': False, 'root_label': 'Epithelium'})
+    >>> get_root_group(row)
+    'Epithelium'
+    """
+    if config is None:
+        config = GroupConfig()
+
+    # Check for hybrid using is_ambiguous_root column
+    is_ambiguous = row.get("is_ambiguous_root", False)
+    if is_ambiguous is True or str(is_ambiguous).lower() == "true":
+        return config.hybrid_group_name
+
+    # Check assigned_label for hybrid marker (~)
+    assigned_label = str(row.get("assigned_label", ""))
+    if "~" in assigned_label:
+        return config.hybrid_group_name
+
+    # Get root_label
+    root_label = str(row.get("root_label", ""))
+
+    # Handle Unassigned
+    if root_label.lower() in ("unassigned", "unknown", "", "nan"):
+        return config.unassigned_group_name
+
+    # Map to known groups using keyword matching
+    root_label_lower = root_label.lower()
+
+    if "epithelium" in root_label_lower or "epithelial" in root_label_lower:
+        return "Epithelium"
+    if "endothelium" in root_label_lower or "endothelial" in root_label_lower:
+        return "Endothelium"
+    if "mesenchym" in root_label_lower or "stromal" in root_label_lower:
+        return "Mesenchymal Cells"
+    if "immune" in root_label_lower:
+        return "Immune Cells"
+
+    # Return as-is if it matches a known group in config
+    if root_label in config.group_order:
+        return root_label
+
+    # Default to Unassigned for unknown types
+    return config.unassigned_group_name
+
+
+def build_groups_from_annotations(
+    cluster_annotations: pd.DataFrame,
+    diagnostic_report: Optional[pd.DataFrame] = None,
+    config: Optional[GroupConfig] = None,
+    logger: Optional[logging.Logger] = None,
+) -> List[ClusterGroup]:
+    """Build cluster groups from cluster annotations.
+
+    Derives groups dynamically from the root_label column of cluster_annotations,
+    using is_ambiguous_root to identify hybrid clusters.
+
+    Parameters
+    ----------
+    cluster_annotations : pd.DataFrame
+        DataFrame from cluster_annotations.csv.
+        Required columns: cluster_id, root_label
+        Optional columns: is_ambiguous_root, n_cells, assigned_label
+    diagnostic_report : pd.DataFrame, optional
+        DataFrame from diagnostic_report.csv.
+        If provided, filters subcluster_ids to only SUBCLUSTER recommendations.
+        Required columns: cluster_id, recommendation
+    config : GroupConfig, optional
+        Group configuration. Uses defaults if not provided.
+    logger : logging.Logger, optional
+        Logger instance
+
+    Returns
+    -------
+    List[ClusterGroup]
+        List of ClusterGroup objects, ordered by config.group_order
+
+    Examples
+    --------
+    >>> annotations = pd.read_csv("cluster_annotations.csv")
+    >>> groups = build_groups_from_annotations(annotations)
+    >>> for g in groups:
+    ...     print(f"{g.name}: {g.n_clusters} clusters, {g.n_cells} cells")
+    Epithelium: 17 clusters, 450000 cells
+    Endothelium: 5 clusters, 120000 cells
+    ...
+    """
+    logger = logger or logging.getLogger(__name__)
+
+    if config is None:
+        config = GroupConfig()
+
+    # Ensure cluster_id is string
+    annotations = cluster_annotations.copy()
+    annotations["cluster_id"] = annotations["cluster_id"].astype(str)
+
+    # Build set of SUBCLUSTER clusters from diagnostic report
+    subcluster_clusters: Set[str] = set()
+    if diagnostic_report is not None and not diagnostic_report.empty:
+        diag = diagnostic_report.copy()
+        diag["cluster_id"] = diag["cluster_id"].astype(str)
+        if "recommendation" in diag.columns:
+            subcluster_mask = diag["recommendation"] == "SUBCLUSTER"
+            subcluster_clusters = set(diag.loc[subcluster_mask, "cluster_id"].tolist())
+
+    # Group clusters by root group
+    groups_dict: Dict[str, ClusterGroup] = {}
+
+    for _, row in annotations.iterrows():
+        cluster_id = str(row["cluster_id"])
+        group_name = get_root_group(row, config)
+        n_cells = int(row.get("n_cells", 0))
+
+        if group_name not in groups_dict:
+            groups_dict[group_name] = ClusterGroup(
+                name=group_name,
+                cluster_ids=set(),
+                focus_label=group_name,
+                subcluster_ids=set(),
+                n_cells=0,
+            )
+
+        group = groups_dict[group_name]
+        group.cluster_ids.add(cluster_id)
+        group.n_cells += n_cells
+
+        # Add to subcluster_ids if:
+        # - No diagnostic report provided (subcluster all), OR
+        # - Cluster is in SUBCLUSTER set
+        if diagnostic_report is None or cluster_id in subcluster_clusters:
+            group.subcluster_ids.add(cluster_id)
+
+    # Order groups according to config.group_order
+    ordered_groups: List[ClusterGroup] = []
+    for group_name in config.group_order:
+        if group_name in groups_dict:
+            ordered_groups.append(groups_dict[group_name])
+
+    # Add any unexpected groups at the end (sorted alphabetically)
+    unexpected_groups = sorted([
+        name for name in groups_dict.keys()
+        if name not in config.group_order
+    ])
+    for group_name in unexpected_groups:
+        ordered_groups.append(groups_dict[group_name])
+
+    logger.debug(
+        "Built %d groups from %d clusters",
+        len(ordered_groups),
+        len(annotations)
+    )
+
+    return ordered_groups
+
+
+def summarize_groups(groups: List[ClusterGroup]) -> str:
+    """Format a summary of groups for logging.
+
+    Parameters
+    ----------
+    groups : List[ClusterGroup]
+        List of ClusterGroup objects
+
+    Returns
+    -------
+    str
+        Formatted summary string
+    """
+    lines = ["Group Summary:", "-" * 60]
+    total_clusters = 0
+    total_cells = 0
+    total_subcluster = 0
+
+    for i, group in enumerate(groups, 1):
+        prefix = f"g{i}"
+        safe_name = group.name.lower().replace(' ', '_')
+        status = "WORK" if group.has_work else "skip"
+        lines.append(
+            f"  {prefix}_{safe_name:20s}: "
+            f"{group.n_clusters:4d} clusters, "
+            f"{group.n_cells:8,d} cells, "
+            f"{group.n_subcluster:3d} SUBCLUSTER [{status}]"
+        )
+        total_clusters += group.n_clusters
+        total_cells += group.n_cells
+        total_subcluster += group.n_subcluster
+
+    lines.append("-" * 60)
+    lines.append(
+        f"  Total: {total_clusters} clusters, "
+        f"{total_cells:,} cells, "
+        f"{total_subcluster} to SUBCLUSTER"
+    )
+
+    return "\n".join(lines)
+
+
+# =============================================================================
+# Group Export Functions
+# =============================================================================
+
+
+def export_groups_derived_yaml(
+    groups: List[ClusterGroup],
+    output_path: Path,
+    marker_map_path: Optional[str] = None,
+    iteration: int = 1,
+    logger: Optional[logging.Logger] = None,
+) -> Path:
+    """Export groups_derived.yaml configuration file.
+
+    Parameters
+    ----------
+    groups : List[ClusterGroup]
+        List of ClusterGroup objects from build_groups_from_annotations()
+    output_path : Path
+        Output file path for groups_derived.yaml
+    marker_map_path : str, optional
+        Path to marker map (included in metadata)
+    iteration : int
+        Current iteration number
+    logger : logging.Logger, optional
+        Logger instance
+
+    Returns
+    -------
+    Path
+        Path to the exported YAML file
+    """
+    import yaml
+
+    logger = logger or logging.getLogger(__name__)
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    groups_data = {
+        "version": "2.0",
+        "iteration": iteration,
+        "generated_at": datetime.now().isoformat(),
+    }
+
+    if marker_map_path:
+        groups_data["marker_map"] = str(marker_map_path)
+
+    # Add groups list
+    groups_data["groups"] = [g.to_dict() for g in groups]
+
+    with open(output_path, 'w') as f:
+        yaml.safe_dump(groups_data, f, default_flow_style=False, sort_keys=False)
+
+    logger.info("Exported groups_derived.yaml: %d groups → %s", len(groups), output_path)
+    return output_path
+
+
+def export_groups_structure(
+    cluster_annotations: pd.DataFrame,
+    cluster_label_mapping: pd.DataFrame,
+    output_dir: Path,
+    diagnostic_report: Optional[pd.DataFrame] = None,
+    config: Optional[GroupConfig] = None,
+    marker_map_path: Optional[str] = None,
+    iteration: int = 1,
+    logger: Optional[logging.Logger] = None,
+) -> Dict[str, Any]:
+    """Export groups/ directory structure from annotations.
+
+    Creates per-group subdirectories with cluster_label_mapping.csv files
+    and generates groups_derived.yaml for workflow tracking.
+
+    This matches the reference implementation from ft/src/workflow/stage_i_unified.py,
+    where the same global mapping is copied to each group directory for
+    organizational review purposes.
+
+    Parameters
+    ----------
+    cluster_annotations : pd.DataFrame
+        DataFrame from cluster_annotations.csv.
+        Required columns: cluster_id, root_label, n_cells
+        Optional columns: is_ambiguous_root, assigned_label
+    cluster_label_mapping : pd.DataFrame
+        DataFrame from cluster_label_mapping.csv.
+        Required columns: cluster_id, cell_type (or assigned_label), n_cells
+    output_dir : Path
+        Output directory (groups/ will be created as subdirectory)
+    diagnostic_report : pd.DataFrame, optional
+        DataFrame from diagnostic_report.csv for SUBCLUSTER filtering
+    config : GroupConfig, optional
+        Group configuration. Uses defaults if not provided.
+    marker_map_path : str, optional
+        Path to marker map (included in groups_derived.yaml)
+    iteration : int
+        Current iteration number
+    logger : logging.Logger, optional
+        Logger instance
+
+    Returns
+    -------
+    Dict[str, Any]
+        Result dictionary with:
+        - groups_dir: Path to groups/ directory
+        - groups_derived_path: Path to groups_derived.yaml
+        - group_dirs: Dict mapping group name to directory path
+        - n_groups: Number of groups created
+        - groups: List of ClusterGroup objects
+
+    Examples
+    --------
+    >>> annotations = pd.read_csv("cluster_annotations.csv")
+    >>> mapping = pd.read_csv("cluster_label_mapping.csv")
+    >>> result = export_groups_structure(annotations, mapping, Path("output"))
+    >>> print(result['n_groups'])
+    6
+    >>> print(result['group_dirs'].keys())
+    dict_keys(['Epithelium', 'Endothelium', 'Mesenchymal Cells', ...])
+    """
+    logger = logger or logging.getLogger(__name__)
+
+    if config is None:
+        config = GroupConfig()
+
+    output_dir = Path(output_dir)
+    groups_dir = output_dir / "groups"
+    groups_dir.mkdir(parents=True, exist_ok=True)
+
+    # Build groups from annotations
+    groups = build_groups_from_annotations(
+        cluster_annotations=cluster_annotations,
+        diagnostic_report=diagnostic_report,
+        config=config,
+        logger=logger,
+    )
+
+    if not groups:
+        logger.warning("No groups derived from annotations")
+        return {
+            "groups_dir": groups_dir,
+            "groups_derived_path": None,
+            "group_dirs": {},
+            "n_groups": 0,
+            "groups": [],
+        }
+
+    # Log group summary
+    logger.info(summarize_groups(groups))
+
+    # Create per-group directories and export mapping files
+    group_dirs: Dict[str, Path] = {}
+
+    for i, group in enumerate(groups, 1):
+        dir_name = config.get_dir_name(i, group.name)
+        group_dir = groups_dir / dir_name
+        group_dir.mkdir(parents=True, exist_ok=True)
+
+        # Copy the global mapping to each group directory
+        # (matches reference behavior - same file in each group for organization)
+        mapping_path = group_dir / "cluster_label_mapping.csv"
+        cluster_label_mapping.to_csv(mapping_path, index=False)
+
+        group_dirs[group.name] = group_dir
+
+        logger.info(
+            "  Created %s/cluster_label_mapping.csv (%d clusters)",
+            dir_name,
+            group.n_clusters,
+        )
+
+    # Export groups_derived.yaml
+    groups_derived_path = output_dir / "groups_derived.yaml"
+    export_groups_derived_yaml(
+        groups=groups,
+        output_path=groups_derived_path,
+        marker_map_path=marker_map_path,
+        iteration=iteration,
+        logger=logger,
+    )
+
+    logger.info(
+        "Groups structure complete: %d groups → %s",
+        len(groups),
+        groups_dir,
+    )
+
+    return {
+        "groups_dir": groups_dir,
+        "groups_derived_path": groups_derived_path,
+        "group_dirs": group_dirs,
+        "n_groups": len(groups),
+        "groups": groups,
+    }
 
 
 # =============================================================================
@@ -1977,12 +2547,14 @@ def run_review_exports(
                 scores_df_copy['label'] = scores_df_copy['label'].astype(str)
 
                 # Create lookup dictionary keyed by (cluster_id, label)
+                # Note: Convert to Python float to ensure consistent round() behavior
+                # (np.float64 and Python float have different rounding at boundaries like 0.8875)
                 metrics_lookup = {}
                 for _, row in scores_df_copy.iterrows():
                     key = (row['cluster_id'], row['label'])
                     metrics_lookup[key] = {
-                        'mean_enrichment': row.get('mean_enrichment', 0),
-                        'mean_positive_fraction': row.get('mean_positive_fraction', 0),
+                        'mean_enrichment': float(row.get('mean_enrichment', 0) or 0),
+                        'mean_positive_fraction': float(row.get('mean_positive_fraction', 0) or 0),
                     }
 
                 # Also build fallback: cluster_id -> highest score's metrics
@@ -1991,8 +2563,8 @@ def run_review_exports(
                 for idx in best_idx:
                     row = scores_df_copy.loc[idx]
                     fallback_lookup[row['cluster_id']] = {
-                        'mean_enrichment': row.get('mean_enrichment', 0),
-                        'mean_positive_fraction': row.get('mean_positive_fraction', 0),
+                        'mean_enrichment': float(row.get('mean_enrichment', 0) or 0),
+                        'mean_positive_fraction': float(row.get('mean_positive_fraction', 0) or 0),
                     }
 
                 # Apply: use assigned_label's metrics, fall back to highest score

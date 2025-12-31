@@ -7,6 +7,7 @@ Key Features:
 - Enhanced annotation exports (44 columns) with lineage tracking
 - Stage H format exports (24 columns) for backward compatibility
 - Cluster label mapping with score normalization
+- Groups structure export for organized review by lineage
 """
 
 from .assignment import annotate_obs
@@ -31,6 +32,15 @@ from .export import (
     export_workflow_state,
     generate_enhanced_annotations_44col,
     run_review_exports,
+    # Group structure exports (NEW)
+    GroupConfig,
+    ClusterGroup,
+    DEFAULT_GROUP_ORDER,
+    build_groups_from_annotations,
+    export_groups_structure,
+    export_groups_derived_yaml,
+    summarize_groups,
+    get_root_group,
 )
 from .gating import (
     BASE_GATING_PARAMS,
@@ -100,4 +110,13 @@ __all__ = [
     "export_workflow_state",
     "generate_enhanced_annotations_44col",
     "run_review_exports",
+    # Group structure exports (NEW)
+    "GroupConfig",
+    "ClusterGroup",
+    "DEFAULT_GROUP_ORDER",
+    "build_groups_from_annotations",
+    "export_groups_structure",
+    "export_groups_derived_yaml",
+    "summarize_groups",
+    "get_root_group",
 ]
