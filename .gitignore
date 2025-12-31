@@ -124,6 +124,8 @@ out/
 *.hdf5
 *.parquet
 *.feather
+*.pkl
+*.pickle
 
 # Log files
 *.log
