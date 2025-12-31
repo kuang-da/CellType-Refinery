@@ -968,21 +968,27 @@ def export_composition_stats(
     logger.info(f'  Wrote composition_global_refined.csv ({len(comp_global)} cell types)')
 
     # Composition by sample (matching reference format exactly)
+    # Uses value_counts() approach to match reference order (descending by count,
+    # then first-occurrence order for ties)
     if sample_col:
         logger.info('Generating composition by sample...')
-        comp_sample = adata.obs.groupby([sample_col, cell_type_col]).size().unstack(fill_value=0)
-
-        # Long format with reference column names
-        comp_sample_long = comp_sample.stack().reset_index()
-        comp_sample_long.columns = ['sample_id', 'cell_type', 'n_cells']
-        # Add sample totals
-        sample_totals = comp_sample_long.groupby('sample_id')['n_cells'].transform('sum')
-        comp_sample_long['proportion'] = round(comp_sample_long['n_cells'] / sample_totals * 100, 2)
-        comp_sample_long['sample_id_total'] = sample_totals
-        # Sort by sample and n_cells descending
-        comp_sample_long = comp_sample_long.sort_values(
-            ['sample_id', 'n_cells'], ascending=[True, False]
-        )
+        records = []
+        # Iterate samples in sorted order (matches reference after sort)
+        for sample_val in sorted(adata.obs[sample_col].unique()):
+            mask = adata.obs[sample_col] == sample_val
+            subset = adata.obs.loc[mask]
+            sample_total = len(subset)
+            # value_counts() returns descending by count, ties in first-occurrence order
+            counts = subset[cell_type_col].value_counts()
+            for cell_type, count in counts.items():
+                records.append({
+                    'sample_id': sample_val,
+                    'cell_type': cell_type,
+                    'n_cells': int(count),
+                    'proportion': round(100 * count / sample_total, 2),
+                    'sample_id_total': sample_total,
+                })
+        comp_sample_long = pd.DataFrame.from_records(records)
         sample_path = output_dir / 'composition_by_sample_refined.csv'
         comp_sample_long.to_csv(sample_path, index=False)
         output_paths['by_sample'] = sample_path
