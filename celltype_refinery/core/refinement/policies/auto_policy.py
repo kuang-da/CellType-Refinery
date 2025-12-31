@@ -711,7 +711,8 @@ class AutoPolicy:
         # Get child data if parent
         if result["is_parent"]:
             children = hierarchy[assigned_label]
-            result["children"] = ";".join(children)
+            # ISSUE-003k fix: sort children alphabetically for deterministic output
+            result["children"] = ";".join(sorted(children))
 
             cluster_scores = marker_scores[marker_scores["cluster_id"] == row["cluster_id"]]
             child_scores = cluster_scores[cluster_scores["label"].isin(children)].copy()

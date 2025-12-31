@@ -211,7 +211,8 @@ class CriteriaEvaluator:
         """Evaluate parent-specific criteria (subtype signal, heterogeneity, mixed population)."""
         assigned_label = result["assigned_label"]
         children = hierarchy[assigned_label]
-        result["children"] = ";".join(children)
+        # ISSUE-003k fix: sort children alphabetically for deterministic output
+        result["children"] = ";".join(sorted(children))
 
         cluster_scores = marker_scores[marker_scores["cluster_id"] == row["cluster_id"]]
         child_scores = cluster_scores[cluster_scores["label"].isin(children)].copy()
@@ -426,4 +427,5 @@ def build_hierarchy_from_scores(marker_scores: pd.DataFrame) -> Dict[str, List[s
             child = parts[i + 1]
             parents_children[parent].add(child)
 
-    return {k: list(v) for k, v in parents_children.items()}
+    # ISSUE-003k fix: sort children alphabetically for deterministic output
+    return {k: sorted(v) for k, v in parents_children.items()}
