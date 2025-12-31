@@ -1931,6 +1931,22 @@ def run_review_exports(
                     lambda x: round(float(x), 3) if pd.notna(x) else x
                 )
 
+        # Fix NaN representation to match reference (ISSUE-003h)
+        # 1. For Unassigned: assigned_path should be "Unassigned" not NaN
+        if 'assigned_path' in cluster_ann.columns and 'assigned_label' in cluster_ann.columns:
+            unassigned_mask = cluster_ann['assigned_label'] == 'Unassigned'
+            cluster_ann.loc[unassigned_mask, 'assigned_path'] = 'Unassigned'
+
+        # 2. For Unassigned: min_margin_along_path should be NaN not 0.0
+        if 'min_margin_along_path' in cluster_ann.columns and 'assigned_label' in cluster_ann.columns:
+            unassigned_mask = cluster_ann['assigned_label'] == 'Unassigned'
+            cluster_ann.loc[unassigned_mask, 'min_margin_along_path'] = float('nan')
+
+        # 3. For root-level (assigned_label == root_label): assigned_level should be -1 not 0
+        if 'assigned_level' in cluster_ann.columns and 'assigned_label' in cluster_ann.columns and 'root_label' in cluster_ann.columns:
+            root_level_mask = (cluster_ann['assigned_label'] == cluster_ann['root_label']) & (cluster_ann['assigned_level'] == 0)
+            cluster_ann.loc[root_level_mask, 'assigned_level'] = -1
+
         # Sort by cluster_id using reference sort key for consistent ordering
         # (Handles subclusters: '1:0' -> (1, 0), deeper subclusters at end)
         cluster_ann = cluster_ann.sort_values(
