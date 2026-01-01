@@ -45,6 +45,7 @@ except ImportError:
     yaml = None
 
 from .engine import PoolingEngine, PoolingResult
+from ..annotation.export import export_composition_stats
 
 
 def setup_logger(
@@ -196,17 +197,26 @@ def save_workflow_state(
         "stage": "J",
         "marker_map_path": str(marker_map_path),
         "input_path": str(input_path),
-        "stage_h_dir": str(out_dir),
+        "stage_h_dir": str(out_dir),  # Point to self for Stage I compatibility
         "out_dir": str(out_dir),
         "created_at": now,
         "updated_at": now,
+        # Stage I compatibility flags
+        "annotate_complete": False,
+        "annotate_timestamp": None,
+        "annotate_output": None,
         "diagnose_complete": True,
         "diagnose_timestamp": now,
         "diagnostic_summary": diagnostic_summary,
         "diagnostic_report_path": str(out_dir / "diagnostic_report.csv"),
         "execute_complete": False,
         "execute_timestamp": None,
+        "groups_executed": [],
+        "groups_skipped": [],
         "final_output_path": str(out_dir / "refined_final.h5ad"),
+        "review_complete": False,
+        "review_timestamp": None,
+        # Stage J-specific info
         "pooling_complete": result.success,
         "pooling_summary": {
             "n_pools_created": int(result.n_pools_created),
@@ -221,157 +231,52 @@ def save_workflow_state(
         yaml.dump(state, f, default_flow_style=False, sort_keys=False)
 
 
-def export_composition(
-    adata: "sc.AnnData",
-    out_dir: Path,
-    cell_type_col: str,
-    logger: logging.Logger,
-) -> dict:
-    """Export composition statistics.
-
-    Parameters
-    ----------
-    adata : sc.AnnData
-        AnnData object
-    out_dir : Path
-        Output directory
-    cell_type_col : str
-        Cell type column name
-    logger : logging.Logger
-        Logger instance
-
-    Returns
-    -------
-    dict
-        Paths to exported files
-    """
-    obs = adata.obs.copy()
-    obs[cell_type_col] = obs[cell_type_col].astype(str)
-
-    # Global composition
-    global_comp = obs[cell_type_col].value_counts().reset_index()
-    global_comp.columns = ["cell_type", "n_cells"]
-    global_comp["proportion"] = global_comp["n_cells"] / len(obs)
-
-    global_path = out_dir / "composition_global.csv"
-    global_comp.to_csv(global_path, index=False)
-    logger.info(f"  Saved: {global_path}")
-
-    # Sample composition (if sample_id exists)
-    if "sample_id" in obs.columns:
-        sample_comp = obs.groupby(["sample_id", cell_type_col]).size().reset_index(name="n_cells")
-        sample_path = out_dir / "composition_by_sample.csv"
-        sample_comp.to_csv(sample_path, index=False)
-        logger.info(f"  Saved: {sample_path}")
-
-    return {"global": str(global_path)}
-
-
 def generate_groups_derived(
-    cluster_annotations: pd.DataFrame,
-    adata: "sc.AnnData",
-    label_col: str,
+    diagnostic_report: pd.DataFrame,
+    marker_map_path: str,
 ) -> dict:
-    """Generate groups_derived.yaml for Stage I iterate workflow.
+    """Generate groups_derived.yaml matching ft/src/stage_j_pool.py format.
 
-    Groups clusters by root_label for organized processing:
-    1. Epithelium
-    2. Endothelium
-    3. Mesenchymal Cells
-    4. Immune Cells
-    5. Hybrids (ambiguous root clusters)
-    6. Unassigned
+    Groups by assigned_label (each cell type gets its own group).
+    Matches reference: ft/src/stage_j_pool.py:553-580
 
     Parameters
     ----------
-    cluster_annotations : pd.DataFrame
-        Cluster annotations with root_label column
-    adata : sc.AnnData
-        AnnData object for cell count validation
-    label_col : str
-        Cell type label column name
+    diagnostic_report : pd.DataFrame
+        Diagnostic report with assigned_label and recommendation columns.
+    marker_map_path : str
+        Path to marker map JSON file.
 
     Returns
     -------
     dict
-        Groups configuration for Stage I
+        Groups configuration matching reference schema.
     """
-    # Standard group ordering
-    GROUP_ORDER = [
-        "Epithelium",
-        "Endothelium",
-        "Mesenchymal Cells",
-        "Immune Cells",
-        "Hybrids",
-        "Unassigned",
-    ]
+    from datetime import datetime
 
-    groups = {}
-    group_idx = 1
+    groups = []
 
-    # Handle case where root_label may not exist
-    if "root_label" not in cluster_annotations.columns:
-        # Fall back to parsing from assigned_label
-        cluster_annotations = cluster_annotations.copy()
-        cluster_annotations["root_label"] = cluster_annotations["assigned_label"].apply(
-            lambda x: x.split("~")[0] if "~" in str(x) else (
-                str(x)[5:] if str(x).startswith("Pool_") else str(x)
-            )
-        )
+    # Group by assigned_label (matches reference Stage J)
+    for label, grp in diagnostic_report.groupby("assigned_label"):
+        cluster_ids = grp["cluster_id"].astype(str).tolist()
+        subcluster_ids = grp[grp["recommendation"] == "SUBCLUSTER"]["cluster_id"].astype(str).tolist()
 
-    # Check for ambiguous root flag
-    has_ambiguous_flag = "is_ambiguous_root" in cluster_annotations.columns
+        groups.append({
+            "name": label,
+            "focus_label": label,
+            "cluster_ids": cluster_ids,
+            "subcluster_ids": subcluster_ids,
+            "n_clusters": len(cluster_ids),
+            "n_subcluster": len(subcluster_ids),
+        })
 
-    # Categorize clusters
-    cluster_groups = {}
-    for _, row in cluster_annotations.iterrows():
-        cluster_id = str(row["cluster_id"])
-        root_label = str(row.get("root_label", ""))
-        is_ambiguous = bool(row.get("is_ambiguous_root", False)) if has_ambiguous_flag else ("~" in str(row.get("assigned_label", "")))
-
-        if is_ambiguous:
-            group_name = "Hybrids"
-        elif root_label in GROUP_ORDER:
-            group_name = root_label
-        elif root_label.startswith("Pool_"):
-            # Extract root from Pool_X
-            extracted = root_label[5:]
-            if "~" in extracted:
-                group_name = "Hybrids"
-            elif extracted in GROUP_ORDER:
-                group_name = extracted
-            else:
-                group_name = "Unassigned"
-        else:
-            group_name = "Unassigned"
-
-        if group_name not in cluster_groups:
-            cluster_groups[group_name] = []
-        cluster_groups[group_name].append(cluster_id)
-
-    # Build groups in standard order
-    for group_name in GROUP_ORDER:
-        if group_name in cluster_groups:
-            cluster_ids = sorted(cluster_groups[group_name])
-            n_cells = 0
-            for cid in cluster_ids:
-                ann_row = cluster_annotations[cluster_annotations["cluster_id"].astype(str) == cid]
-                if len(ann_row) > 0:
-                    n_cells += int(ann_row["n_cells"].iloc[0])
-
-            groups[f"g{group_idx}_{group_name.lower().replace(' ', '_')}"] = {
-                "name": group_name,
-                "cluster_ids": cluster_ids,
-                "n_clusters": len(cluster_ids),
-                "n_cells": n_cells,
-                "subcluster_only": True,  # Stage J pools only need subclustering
-            }
-            group_idx += 1
+    # Sort: pools first (Pool_*), then alphabetically
+    groups.sort(key=lambda g: (not g["name"].startswith("Pool_"), g["name"]))
 
     return {
-        "version": "1.0",
-        "source": "Stage J pooling",
         "groups": groups,
+        "marker_map": marker_map_path,
+        "generated_at": datetime.now().isoformat(),
     }
 
 
@@ -751,15 +656,15 @@ def main(argv: Optional[list] = None) -> int:
 
     # 8. Generate groups_derived.yaml for Stage I iterate workflow
     if yaml is not None:
-        groups_derived = generate_groups_derived(new_annotations, adata, args.label_col)
+        groups_derived = generate_groups_derived(new_diagnostic, str(args.marker_map))
         groups_path = args.out / "groups_derived.yaml"
         with open(groups_path, "w") as f:
             yaml.dump(groups_derived, f, default_flow_style=False, sort_keys=False)
         logger.info(f"  Saved: {groups_path}")
 
-    # 9. Generate composition statistics
+    # 9. Generate composition statistics (using annotation module for reference-format output)
     logger.info("Generating composition statistics...")
-    export_composition(adata, args.out, args.label_col, logger)
+    export_composition_stats(adata, args.out, args.label_col, logger)
 
     # Final summary
     logger.info("")
