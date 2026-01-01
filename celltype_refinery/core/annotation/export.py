@@ -1690,9 +1690,9 @@ def export_composition_stats(
             comp_donor_long['n_cells'] / donor_totals * 100, 2
         )
         comp_donor_long['donor_total'] = donor_totals
-        # Sort by donor and n_cells descending
+        # Sort by donor, n_cells descending, and cell_type alphabetically (for deterministic ordering)
         comp_donor_long = comp_donor_long.sort_values(
-            ['donor', 'n_cells'], ascending=[True, False]
+            ['donor', 'n_cells', 'cell_type'], ascending=[True, False, True]
         )
         donor_path = output_dir / 'composition_by_donor_refined.csv'
         comp_donor_long.to_csv(donor_path, index=False)
@@ -2193,28 +2193,57 @@ def _map_col_name_44(col: str) -> str:
 
 
 def _build_reason_string(row: pd.Series) -> str:
-    """Build reason string from row data."""
+    """Build reason string from row data.
+
+    Uses reference format based on stop_reason:
+    - ambiguous_root: "Ambiguous roots (gap=X.XX)"
+    - ambiguous_siblings: "Mixed population (score=X.XX)"
+    - no_root_passed: "No root gate passed[: details]"
+    - no_child_passed: "score=X.XX, margin=Y.YY"
+    - hierarchical descent: "{root} -> {label} (score=X.XX, margin=Y.YY)"
+    - default: "score=X.XX, margin=Y.YY"
+    """
     label = row.get('assigned_label', '')
     score = row.get('assigned_score', 0)
     margin = row.get('min_margin_along_path', 0)
+    stop_reason = row.get('stop_reason', '')
+    root = row.get('root_label', '')
 
     # Handle None/NaN values
     if score is None or (isinstance(score, float) and pd.isna(score)):
         score = 0
     if margin is None or (isinstance(margin, float) and pd.isna(margin)):
         margin = 0
+    if stop_reason is None or (isinstance(stop_reason, float) and pd.isna(stop_reason)):
+        stop_reason = ''
+    if root is None or (isinstance(root, float) and pd.isna(root)):
+        root = ''
 
+    # Format reason based on stop_reason and hierarchy (matching reference format)
+    # Note: no_root_passed is checked first because Unassigned cells should still get this reason
+    if stop_reason == "no_root_passed":
+        root_fail_reasons = row.get("root_fail_reasons", "")
+        if root_fail_reasons and not (isinstance(root_fail_reasons, float) and pd.isna(root_fail_reasons)):
+            return f"No root gate passed: {root_fail_reasons}"
+        else:
+            return "No root gate passed"
+
+    # For non-Unassigned labels, continue with other stop_reason checks
     if not label or label == 'Unassigned':
         return ''
 
-    # Check if it's a path (contains ' / ')
-    path = row.get('assigned_path', '')
-    if ' / ' in str(path):
-        parts = str(path).split(' / ')
-        if len(parts) >= 2:
-            return f"{parts[0]} -> {label} (score={score:.2f}, margin={margin:.2f})"
-
-    return f"{label} (score={score:.2f})"
+    if stop_reason == "ambiguous_root":
+        return f"Ambiguous roots (gap={margin:.2f})"
+    elif stop_reason == "ambiguous_siblings":
+        return f"Mixed population (score={score:.2f})"
+    elif stop_reason == "no_child_passed":
+        return f"score={score:.2f}, margin={margin:.2f}"
+    elif root and root != label and "~" not in str(root):
+        # Hierarchical descent: root -> subtype
+        return f"{root} -> {label} (score={score:.2f}, margin={margin:.2f})"
+    else:
+        # Default: just score and margin
+        return f"score={score:.2f}, margin={margin:.2f}"
 
 
 def generate_enhanced_annotations_44col(
