@@ -2254,6 +2254,8 @@ def generate_enhanced_annotations_44col(
     logger: Optional[logging.Logger] = None,
     decision_steps: Optional[pd.DataFrame] = None,
     cluster_annotations: Optional[pd.DataFrame] = None,
+    adata: Optional["sc.AnnData"] = None,
+    cluster_col: Optional[str] = None,
 ) -> pd.DataFrame:
     """Generate 44-column enhanced annotations matching reference format.
 
@@ -2282,6 +2284,13 @@ def generate_enhanced_annotations_44col(
     cluster_annotations : pd.DataFrame, optional
         Combined cluster annotations for hierarchical runner-up lookup.
         If not provided, uses cluster_ann parameter.
+    adata : sc.AnnData, optional
+        AnnData object for looking up pre-computed curation_reason from obs.
+        ISSUE-005 C.4 fix: Using pre-computed curation_reason avoids floating-point
+        rounding discrepancies that occur when re-computing from rounded CSV values.
+    cluster_col : str, optional
+        Cluster column name in adata.obs for grouping cells by cluster.
+        Required if adata is provided.
 
     Returns
     -------
@@ -2293,6 +2302,23 @@ def generate_enhanced_annotations_44col(
     # Use cluster_ann as cluster_annotations if not provided
     if cluster_annotations is None:
         cluster_annotations = cluster_ann
+
+    # ISSUE-005 C.4 fix: Build curation_reason lookup from adata.obs
+    # This avoids floating-point rounding discrepancies that occur when
+    # re-computing reason strings from rounded CSV values (e.g., 1.605 -> "1.60"
+    # instead of 1.6050982... -> "1.61")
+    curation_reason_lookup = {}
+    if adata is not None and cluster_col is not None and 'curation_reason' in adata.obs.columns:
+        logger.info('  Building curation_reason lookup from adata.obs (ISSUE-005 C.4 fix)')
+        # Get the cluster column as string
+        cluster_ids_obs = adata.obs[cluster_col].astype(str)
+        # Group by cluster_id and get the most common curation_reason
+        for cid in cluster_ids_obs.unique():
+            mask = cluster_ids_obs == cid
+            reasons = adata.obs.loc[mask, 'curation_reason'].value_counts()
+            if len(reasons) > 0:
+                curation_reason_lookup[str(cid)] = str(reasons.index[0])
+        logger.info(f'  Loaded {len(curation_reason_lookup)} pre-computed curation_reasons')
 
     # Hierarchical columns that exist per level
     HIER_COLS = [
@@ -2352,13 +2378,19 @@ def generate_enhanced_annotations_44col(
         iteration_created = int(row.get('iteration_created', cluster_id.count(':')))
 
         # Build base record
+        # ISSUE-005 C.4 fix: Use pre-computed curation_reason from adata.obs if available
+        # to avoid floating-point rounding discrepancies
+        reason = curation_reason_lookup.get(cluster_id, None)
+        if reason is None:
+            # Fallback to building reason from CSV values (may have rounding differences)
+            reason = _build_reason_string(row)
         record = {
             'cluster_id': cluster_id,
             'origin_cluster': origin_cluster,
             'iteration_created': iteration_created,
             'n_cells': row.get('n_cells', 0),
             'proportion': row.get('proportion', 0),
-            'reason': _build_reason_string(row),
+            'reason': reason,
         }
 
         # Add lvl0 columns (from Stage H or explicit defaults)
@@ -2688,6 +2720,7 @@ def run_review_exports(
 
         # Generate enhanced version with 44-column format
         # Pass decision_steps for hierarchical runner-up calculation (ISSUE-003j fix)
+        # Pass adata and cluster_col for ISSUE-005 C.4 fix (curation_reason lookup)
         enhanced_df = generate_enhanced_annotations_44col(
             cluster_ann=cluster_ann,
             scores_df=scores_df,
@@ -2696,6 +2729,8 @@ def run_review_exports(
             logger=logger,
             decision_steps=decision_steps_df,
             cluster_annotations=cluster_ann,
+            adata=adata,
+            cluster_col=cluster_col,
         )
         # Ensure consistent sort order
         if 'cluster_id' in enhanced_df.columns:
