@@ -108,6 +108,9 @@ from .cluster_metrics import (
     merge_heterogeneity_with_annotations,
 )
 
+# Workflow state for iteration tracking
+from .workflow_state import RefinementWorkflowState
+
 __all__ = [
     # Plan classes
     "RefineOp",
@@ -163,4 +166,6 @@ __all__ = [
     # Cluster metrics
     "compute_cluster_marker_heterogeneity",
     "merge_heterogeneity_with_annotations",
+    # Workflow state
+    "RefinementWorkflowState",
 ]

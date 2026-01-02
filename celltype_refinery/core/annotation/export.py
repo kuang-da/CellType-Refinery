@@ -4,14 +4,13 @@ Provides export utilities for cluster annotations and enhanced annotations
 with multi-level lineage tracking.
 
 Key Functions:
-- export_enhanced_annotations: Create 44-column enhanced annotations
+- export_enhanced_annotations: Create 44-column enhanced annotations (reference-aligned)
 - export_cluster_annotations_stage_h_format: Create Stage H format (24 columns)
 - get_hierarchical_runner_up: Get runner-up label from decision tree
 - export_marker_scores: Export marker scores DataFrame to CSV
 - export_composition_stats: Export composition statistics
 - export_review_summary: Export review summary JSON
 - export_workflow_state: Export workflow state YAML
-- generate_enhanced_annotations_44col: Create 44-column format from 24-col input
 - run_review_exports: High-level orchestrator for review exports
 
 Group Structure Export (NEW):
@@ -895,252 +894,9 @@ def get_hierarchical_runner_up(
 
 
 # =============================================================================
-# Enhanced Annotations Export
-# =============================================================================
-
-
-def export_enhanced_annotations(
-    adata: "sc.AnnData",
-    output_path: Path,
-    marker_scores: Optional[pd.DataFrame] = None,
-    decision_steps: Optional[pd.DataFrame] = None,
-    cluster_annotations: Optional[pd.DataFrame] = None,
-    max_iteration: int = 5,
-    include_runner_up: bool = True,
-    include_top_markers: bool = True,
-    top_n_markers: int = 3,
-    logger: Optional[logging.Logger] = None,
-) -> pd.DataFrame:
-    """Export enhanced cluster annotations with multi-level lineage tracking.
-
-    Creates a comprehensive CSV with 44 columns tracking:
-    - Cluster provenance (origin, iteration created)
-    - Cell type assignments at each iteration level
-    - Marker scores and confidence at each level
-    - Runner-up labels and margins
-    - Top expressing markers
-    - Regional distribution
-
-    Parameters
-    ----------
-    adata : sc.AnnData
-        AnnData with cluster annotations
-    output_path : Path
-        Output CSV path
-    marker_scores : pd.DataFrame, optional
-        Marker scores DataFrame. Falls back to adata.uns if not provided.
-    decision_steps : pd.DataFrame, optional
-        Hierarchical decision steps for runner-up detection
-    cluster_annotations : pd.DataFrame, optional
-        Pre-computed cluster annotations. Falls back to adata.uns.
-    max_iteration : int
-        Maximum iteration level to include (default: 5)
-    include_runner_up : bool
-        Whether to include runner-up labels (default: True)
-    include_top_markers : bool
-        Whether to include top marker columns (default: True)
-    top_n_markers : int
-        Number of top markers to include (default: 3)
-    logger : logging.Logger, optional
-        Logger instance
-
-    Returns
-    -------
-    pd.DataFrame
-        Enhanced annotations DataFrame with 44 columns
-    """
-    logger = logger or logging.getLogger(__name__)
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Get marker scores from adata.uns if not provided
-    if marker_scores is None:
-        if "marker_scores_refined" in adata.uns:
-            marker_scores = adata.uns["marker_scores_refined"]
-            if isinstance(marker_scores, dict):
-                marker_scores = pd.DataFrame(marker_scores)
-        else:
-            marker_scores = pd.DataFrame()
-
-    # Determine cluster column (use highest available level)
-    cluster_col = None
-    for level in range(max_iteration, -1, -1):
-        col = f"cluster_lvl{level}"
-        if col in adata.obs:
-            cluster_col = col
-            break
-    if cluster_col is None:
-        cluster_col = "cluster_lvl0"
-
-    # Get unique cluster IDs
-    all_cluster_ids = sorted(
-        adata.obs[cluster_col].astype(str).unique(),
-        key=_sort_cluster_key
-    )
-
-    logger.info("Generating enhanced annotations for %d clusters", len(all_cluster_ids))
-
-    # Build score lookup
-    score_lookup = {}
-    if not marker_scores.empty and "cluster_id" in marker_scores.columns:
-        for cid in marker_scores["cluster_id"].unique():
-            cid_str = str(cid)
-            cluster_scores = marker_scores[marker_scores["cluster_id"].astype(str) == cid_str]
-            if not cluster_scores.empty:
-                # Get all scores for this cluster
-                score_lookup[cid_str] = cluster_scores
-
-    # Build records
-    records = []
-    total_cells = len(adata)
-
-    for cluster_id in all_cluster_ids:
-        cluster_id_str = str(cluster_id)
-        mask = adata.obs[cluster_col].astype(str) == cluster_id_str
-        n_cells = mask.sum()
-
-        if n_cells == 0:
-            continue
-
-        # Determine origin cluster and iteration created
-        if "cluster_lvl0" in adata.obs:
-            origin_cluster = adata.obs.loc[mask, "cluster_lvl0"].astype(str).iloc[0]
-        else:
-            origin_cluster = cluster_id_str.split(":")[0] if ":" in cluster_id_str else cluster_id_str
-
-        iteration_created = cluster_id_str.count(":")
-
-        # Build record with base columns
-        record = {
-            "cluster_id": cluster_id_str,
-            "origin_cluster": origin_cluster,
-            "iteration_created": iteration_created,
-            "n_cells": n_cells,
-            "proportion": round(n_cells / total_cells, 6),
-        }
-
-        # Add cell type and score columns for each iteration level
-        for level in range(max_iteration + 1):
-            level_suffix = f"_lvl{level}"
-            ct_col = f"cell_type_lvl{level}" if level > 0 else "cell_type_lvl0"
-            cluster_lvl_col = f"cluster_lvl{level}"
-
-            # Get cell type for this level
-            cell_type = ""
-            if ct_col in adata.obs:
-                ct_values = adata.obs.loc[mask, ct_col].value_counts()
-                if len(ct_values) > 0:
-                    cell_type = str(ct_values.index[0])
-
-            record[f"cell_type{level_suffix}"] = cell_type
-
-            # Get score for this level (from marker_scores or adata.uns)
-            score = 0.0
-            assigned_path = ""
-            stop_reason = ""
-            confidence = ""
-            coverage = 0.0
-            is_ambiguous_root = False
-            root_label = ""
-            root_fail_reasons = ""
-            min_margin = None
-            decision_trace = ""
-
-            # Look for hierarchical annotation data in adata.uns
-            hier_key = f"hierarchical_annotations_lvl{level}"
-            if hier_key in adata.uns:
-                hier_df = adata.uns[hier_key]
-                if isinstance(hier_df, pd.DataFrame) and not hier_df.empty:
-                    row = hier_df[hier_df["cluster_id"].astype(str) == cluster_id_str]
-                    if not row.empty:
-                        row = row.iloc[0]
-                        score = float(row.get("score", 0))
-                        assigned_path = str(row.get("assigned_path", ""))
-                        stop_reason = str(row.get("stop_reason", ""))
-                        confidence = str(row.get("confidence_level", ""))
-                        coverage = float(row.get("coverage", 0))
-                        is_ambiguous_root = bool(row.get("is_ambiguous_root", False))
-                        root_label = str(row.get("root_label", ""))
-                        root_fail_reasons = str(row.get("root_fail_reasons", ""))
-                        min_margin = row.get("min_margin_along_path")
-                        decision_trace = str(row.get("decision_trace", ""))
-
-            # Fallback to marker_scores if no hierarchical data
-            if score == 0.0 and cluster_id_str in score_lookup:
-                cluster_scores = score_lookup[cluster_id_str]
-                if cell_type and not cluster_scores.empty:
-                    label_scores = cluster_scores[cluster_scores["label"] == cell_type]
-                    if not label_scores.empty:
-                        score = float(label_scores.iloc[0].get("score", 0))
-                        coverage = float(label_scores.iloc[0].get("coverage", 0))
-
-            record[f"score{level_suffix}"] = round(score, 3)
-            record[f"assigned_path{level_suffix}"] = assigned_path
-            record[f"stop_reason{level_suffix}"] = stop_reason
-            record[f"confidence{level_suffix}"] = confidence or _classify_confidence_band(round(float(score), 3))
-            record[f"coverage{level_suffix}"] = round(coverage, 3)
-            record[f"is_ambiguous_root{level_suffix}"] = is_ambiguous_root
-            record[f"root_label{level_suffix}"] = root_label
-            record[f"root_fail_reasons{level_suffix}"] = root_fail_reasons
-            if min_margin is not None and not pd.isna(min_margin):
-                record[f"min_margin{level_suffix}"] = round(float(min_margin), 3)
-            else:
-                record[f"min_margin{level_suffix}"] = None
-            record[f"decision_trace{level_suffix}"] = decision_trace
-
-        # Add runner-up information (based on highest level)
-        if include_runner_up and cluster_annotations is not None:
-            runner_up, runner_up_score, margin = get_hierarchical_runner_up(
-                cluster_id_str, decision_steps, cluster_annotations, marker_scores
-            )
-            record["runner_up_label"] = runner_up
-            record["runner_up_score"] = round(runner_up_score, 3)
-            record["margin_to_runner_up"] = round(margin, 3) if margin != float("inf") else None
-
-        # Add top markers
-        if include_top_markers and cluster_id_str in score_lookup:
-            cluster_scores = score_lookup[cluster_id_str]
-            if not cluster_scores.empty and "label" in cluster_scores.columns:
-                top_scores = cluster_scores.nlargest(top_n_markers, "score")
-                for i, (_, row) in enumerate(top_scores.iterrows(), 1):
-                    record[f"top_marker_{i}"] = str(row.get("label", ""))
-                    record[f"top_marker_{i}_score"] = round(float(row.get("score", 0)), 3)
-
-        # Add regional distribution (if region column exists)
-        if "region" in adata.obs:
-            region_counts = adata.obs.loc[mask, "region"].value_counts()
-            for region, count in region_counts.items():
-                record[f"region_{region}_count"] = count
-                record[f"region_{region}_pct"] = round(100 * count / n_cells, 1)
-
-        # Add mean enrichment and positive fraction
-        if cluster_id_str in score_lookup:
-            cluster_scores = score_lookup[cluster_id_str]
-            # Find the assigned label for this cluster
-            assigned_label = record.get("cell_type_lvl1", record.get("cell_type_lvl0", ""))
-            if assigned_label and not cluster_scores.empty:
-                label_scores = cluster_scores[cluster_scores["label"] == assigned_label]
-                if not label_scores.empty:
-                    record["mean_enrichment"] = round(
-                        float(label_scores.iloc[0].get("mean_enrichment", 0)), 3
-                    )
-                    record["mean_positive_fraction"] = round(
-                        float(label_scores.iloc[0].get("mean_positive_fraction", 0)), 3
-                    )
-
-        records.append(record)
-
-    df = pd.DataFrame.from_records(records)
-    df.to_csv(output_path, index=False)
-
-    logger.info("Exported enhanced annotations: %d clusters, %d columns → %s",
-                len(df), len(df.columns), output_path)
-    return df
-
-
-# =============================================================================
 # Stage H Format Export
 # =============================================================================
+# Note: export_enhanced_annotations is defined below (after helper functions)
 
 
 def export_cluster_annotations_stage_h_format(
@@ -1462,12 +1218,11 @@ def run_annotation_exports(
     # Export enhanced annotations
     enhanced_path = output_dir / "cluster_annotations_enhanced.csv"
     enhanced_df = export_enhanced_annotations(
-        adata=adata,
+        adata,
+        marker_scores=marker_scores if marker_scores is not None else pd.DataFrame(),
         output_path=enhanced_path,
-        marker_scores=marker_scores,
-        decision_steps=decision_steps,
-        cluster_annotations=cluster_annotations,
-        max_iteration=5,
+        label_key=label_col,
+        iteration=iteration,
         logger=logger,
     )
     output_paths["enhanced"] = enhanced_path
@@ -2246,79 +2001,169 @@ def _build_reason_string(row: pd.Series) -> str:
         return f"score={score:.2f}, margin={margin:.2f}"
 
 
-def generate_enhanced_annotations_44col(
-    cluster_ann: pd.DataFrame,
-    scores_df: Optional[pd.DataFrame],
-    stage_h_dir: Optional[str] = None,
+def _build_cluster_ann_from_obs(
+    adata: "sc.AnnData",
+    cluster_col: str,
+    label_key: str,
+    logger: Optional[logging.Logger] = None,
+) -> pd.DataFrame:
+    """Build minimal cluster_ann DataFrame from adata.obs.
+
+    Fallback when cluster_annotations_subcluster is not in adata.uns.
+
+    Parameters
+    ----------
+    adata : sc.AnnData
+        AnnData with cluster and label columns in obs
+    cluster_col : str
+        Cluster column name (e.g., "cluster_lvl1")
+    label_key : str
+        Label column name (e.g., "cell_type_lvl1")
+    logger : logging.Logger, optional
+        Logger instance
+
+    Returns
+    -------
+    pd.DataFrame
+        Minimal cluster annotations with cluster_id, n_cells, assigned_label, etc.
+    """
+    logger = logger or logging.getLogger(__name__)
+
+    if cluster_col not in adata.obs:
+        logger.warning(f'  Cluster column {cluster_col} not in adata.obs')
+        return pd.DataFrame()
+
+    records = []
+    total_cells = len(adata)
+    cluster_ids = adata.obs[cluster_col].astype(str).unique()
+
+    for cid in sorted(cluster_ids, key=_sort_cluster_key):
+        mask = adata.obs[cluster_col].astype(str) == cid
+        n_cells = int(mask.sum())
+
+        # Get assigned label
+        assigned_label = "Unknown"
+        if label_key in adata.obs:
+            labels = adata.obs.loc[mask, label_key].value_counts()
+            if len(labels) > 0:
+                assigned_label = str(labels.index[0])
+
+        # Derive origin and iteration
+        origin_cluster = cid.split(':')[0] if ':' in cid else cid
+        iteration_created = cid.count(':')
+
+        records.append({
+            'cluster_id': cid,
+            'origin_cluster': origin_cluster,
+            'iteration_created': iteration_created,
+            'n_cells': n_cells,
+            'proportion': round(100 * n_cells / total_cells, 2) if total_cells > 0 else 0,
+            'assigned_label': assigned_label,
+            'assigned_score': 0.0,
+            'stop_reason': '',
+            'root_label': '',
+        })
+
+    df = pd.DataFrame.from_records(records)
+    logger.info(f'  Built cluster_ann from obs: {len(df)} clusters')
+    return df
+
+
+def export_enhanced_annotations(
+    adata: "sc.AnnData",
+    marker_scores: pd.DataFrame,
+    output_path: Path,
+    label_key: str = "cell_type_lvl1",
+    stage_h_annotations_path: Optional[Path] = None,
+    stage_h_decision_steps_path: Optional[Path] = None,
+    previous_enhanced_path: Optional[Path] = None,
     iteration: int = 1,
     logger: Optional[logging.Logger] = None,
-    decision_steps: Optional[pd.DataFrame] = None,
-    cluster_annotations: Optional[pd.DataFrame] = None,
-    adata: Optional["sc.AnnData"] = None,
-    cluster_col: Optional[str] = None,
 ) -> pd.DataFrame:
-    """Generate 44-column enhanced annotations matching reference format.
+    """Export enhanced cluster annotations with hierarchical lineage tracking.
 
-    Creates hierarchical annotations with:
+    Creates a comprehensive CSV with 44 columns matching reference format:
     - 6 basic columns: cluster_id, origin_cluster, iteration_created, n_cells, proportion, reason
     - 16 lvl0 columns: Stage H annotations (or empty if unavailable)
     - 16 lvl1 columns: Current iteration annotations
     - 3 quality metrics: mean_enrichment, mean_positive_fraction, confidence_level
     - 3 runner-up columns: runner_up_label, runner_up_score, gap
 
+    This function aligns with the reference implementation in
+    ft/src/refinement/debug_exports.py:export_enhanced_annotations()
+
     Parameters
     ----------
-    cluster_ann : pd.DataFrame
-        Cluster annotations in 24-column format (from cluster_annotations_subcluster)
-    scores_df : pd.DataFrame, optional
-        Marker scores for runner-up calculation
-    stage_h_dir : str, optional
-        Path to Stage H directory for lvl0 data and decision_steps.csv
+    adata : sc.AnnData
+        AnnData with cluster annotations. Must have cluster_annotations_subcluster
+        in adata.uns for cluster data.
+    marker_scores : pd.DataFrame
+        Marker scores DataFrame for runner-up calculation and quality metrics.
+    output_path : Path
+        Output CSV path for the enhanced annotations.
+    label_key : str
+        Column name for cell type labels (default: "cell_type_lvl1")
+    stage_h_annotations_path : Path, optional
+        Path to Stage H cluster_annotations.csv for lvl0 data.
+    stage_h_decision_steps_path : Path, optional
+        Path to Stage H decision_steps.csv for hierarchical runner-up calculation.
+    previous_enhanced_path : Path, optional
+        Path to previous iteration's cluster_annotations_enhanced.csv for
+        carrying forward lineage data (N-level tracking).
     iteration : int
-        Current iteration number (default: 1)
+        Current iteration number (default: 1). Determines which lvl suffix to use.
     logger : logging.Logger, optional
         Logger instance
-    decision_steps : pd.DataFrame, optional
-        Combined decision steps (Stage H + current iteration) for hierarchical runner-up.
-        If not provided, will try to load from stage_h_dir/decision_steps.csv
-    cluster_annotations : pd.DataFrame, optional
-        Combined cluster annotations for hierarchical runner-up lookup.
-        If not provided, uses cluster_ann parameter.
-    adata : sc.AnnData, optional
-        AnnData object for looking up pre-computed curation_reason from obs.
-        ISSUE-005 C.4 fix: Using pre-computed curation_reason avoids floating-point
-        rounding discrepancies that occur when re-computing from rounded CSV values.
-    cluster_col : str, optional
-        Cluster column name in adata.obs for grouping cells by cluster.
-        Required if adata is provided.
 
     Returns
     -------
     pd.DataFrame
-        44-column enhanced annotations DataFrame
+        44-column enhanced annotations DataFrame (also written to output_path)
     """
     logger = logger or logging.getLogger(__name__)
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Use cluster_ann as cluster_annotations if not provided
-    if cluster_annotations is None:
-        cluster_annotations = cluster_ann
+    # Derive cluster_col from iteration
+    cluster_col = f"cluster_lvl{iteration}" if f"cluster_lvl{iteration}" in adata.obs else "cluster_lvl0"
 
-    # ISSUE-005 C.4 fix: Build curation_reason lookup from adata.obs
-    # This avoids floating-point rounding discrepancies that occur when
-    # re-computing reason strings from rounded CSV values (e.g., 1.605 -> "1.60"
-    # instead of 1.6050982... -> "1.61")
+    # ISSUE-006 fix: Compute total_cells for proportion calculation
+    # Reference: ft/src/refinement/debug_exports.py:428
+    total_cells = len(adata)
+
+    # Extract cluster_ann from adata.uns (matching reference pattern)
+    cluster_ann_key = 'cluster_annotations_subcluster'
+    if cluster_ann_key in adata.uns:
+        cluster_ann = adata.uns[cluster_ann_key].copy()
+        if isinstance(cluster_ann, dict):
+            cluster_ann = pd.DataFrame(cluster_ann)
+    else:
+        # Fallback: build minimal cluster_ann from adata.obs
+        logger.warning(f'  {cluster_ann_key} not in adata.uns, building from obs')
+        cluster_ann = _build_cluster_ann_from_obs(adata, cluster_col, label_key, logger)
+
+    # Use cluster_ann as cluster_annotations for runner-up lookup
+    cluster_annotations = cluster_ann
+
+    # Read curation_reason directly from adata.obs (reference pattern)
+    # This eliminates the ISSUE-005 C.4 lookup workaround
+    # Use vectorized groupby for performance (O(n) instead of O(n_clusters * n_cells))
     curation_reason_lookup = {}
-    if adata is not None and cluster_col is not None and 'curation_reason' in adata.obs.columns:
-        logger.info('  Building curation_reason lookup from adata.obs (ISSUE-005 C.4 fix)')
-        # Get the cluster column as string
-        cluster_ids_obs = adata.obs[cluster_col].astype(str)
-        # Group by cluster_id and get the most common curation_reason
-        for cid in cluster_ids_obs.unique():
-            mask = cluster_ids_obs == cid
-            reasons = adata.obs.loc[mask, 'curation_reason'].value_counts()
-            if len(reasons) > 0:
-                curation_reason_lookup[str(cid)] = str(reasons.index[0])
-        logger.info(f'  Loaded {len(curation_reason_lookup)} pre-computed curation_reasons')
+    if 'curation_reason' in adata.obs.columns:
+        logger.info('  Reading curation_reason directly from adata.obs')
+        # Create a DataFrame with cluster_id and curation_reason
+        temp_df = pd.DataFrame({
+            'cluster_id': adata.obs[cluster_col].astype(str),
+            'curation_reason': adata.obs['curation_reason'].astype(str),
+        })
+        # Get most common reason per cluster using groupby + idxmax (fully vectorized)
+        reason_counts = temp_df.groupby(['cluster_id', 'curation_reason'], observed=True).size()
+        # Get index of max count for each cluster_id
+        idx_max = reason_counts.groupby(level='cluster_id', observed=True).idxmax()
+        # idx_max is a Series with cluster_id as index and (cluster_id, reason) tuples as values
+        for cid, (_, reason) in idx_max.items():
+            curation_reason_lookup[str(cid)] = str(reason)
+        logger.info(f'  Loaded {len(curation_reason_lookup)} curation_reasons')
 
     # Hierarchical columns that exist per level
     HIER_COLS = [
@@ -2332,26 +2177,31 @@ def generate_enhanced_annotations_44col(
     stage_h_lookup = {}
     stage_h_annotations_df = pd.DataFrame()
     stage_h_decision_steps_df = pd.DataFrame()
-    if stage_h_dir:
-        stage_h_path = Path(stage_h_dir) / 'cluster_annotations.csv'
-        if stage_h_path.exists():
-            try:
-                stage_h_annotations_df = pd.read_csv(stage_h_path)
-                for _, row in stage_h_annotations_df.iterrows():
-                    cid = str(row.get('cluster_id', ''))
-                    stage_h_lookup[cid] = row.to_dict()
-                logger.info(f'  Loaded {len(stage_h_lookup)} Stage H annotations for lvl0')
-            except Exception as e:
-                logger.warning(f'  Failed to load Stage H annotations: {e}')
 
-        # Load Stage H decision_steps for hierarchical runner-up calculation
-        stage_h_steps_path = Path(stage_h_dir) / 'decision_steps.csv'
-        if stage_h_steps_path.exists():
-            try:
-                stage_h_decision_steps_df = pd.read_csv(stage_h_steps_path)
-                logger.info(f'  Loaded {len(stage_h_decision_steps_df)} Stage H decision steps')
-            except Exception as e:
-                logger.warning(f'  Failed to load Stage H decision steps: {e}')
+    if stage_h_annotations_path and Path(stage_h_annotations_path).exists():
+        try:
+            stage_h_annotations_df = pd.read_csv(stage_h_annotations_path)
+            for _, row in stage_h_annotations_df.iterrows():
+                cid = str(row.get('cluster_id', ''))
+                stage_h_lookup[cid] = row.to_dict()
+            logger.info(f'  Loaded {len(stage_h_lookup)} Stage H annotations for lvl0')
+        except Exception as e:
+            logger.warning(f'  Failed to load Stage H annotations: {e}')
+
+    # Load Stage H decision_steps for hierarchical runner-up calculation
+    if stage_h_decision_steps_path and Path(stage_h_decision_steps_path).exists():
+        try:
+            stage_h_decision_steps_df = pd.read_csv(stage_h_decision_steps_path)
+            logger.info(f'  Loaded {len(stage_h_decision_steps_df)} Stage H decision steps')
+        except Exception as e:
+            logger.warning(f'  Failed to load Stage H decision steps: {e}')
+
+    # Load decision_steps from adata.uns if available
+    decision_steps = pd.DataFrame()
+    if 'decision_steps_subcluster' in adata.uns:
+        decision_steps = adata.uns['decision_steps_subcluster']
+        if isinstance(decision_steps, dict):
+            decision_steps = pd.DataFrame(decision_steps)
 
     # Combine Stage H and current iteration data for hierarchical runner-up
     combined_annotations = pd.concat(
@@ -2359,8 +2209,8 @@ def generate_enhanced_annotations_44col(
         ignore_index=True
     ) if not stage_h_annotations_df.empty or not cluster_annotations.empty else cluster_annotations
 
-    # Combine decision_steps if provided
-    if decision_steps is not None and not decision_steps.empty:
+    # Combine decision_steps
+    if not decision_steps.empty:
         combined_decision_steps = pd.concat(
             [df for df in [stage_h_decision_steps_df, decision_steps] if not df.empty],
             ignore_index=True
@@ -2378,18 +2228,22 @@ def generate_enhanced_annotations_44col(
         iteration_created = int(row.get('iteration_created', cluster_id.count(':')))
 
         # Build base record
-        # ISSUE-005 C.4 fix: Use pre-computed curation_reason from adata.obs if available
-        # to avoid floating-point rounding discrepancies
+        # Read curation_reason from lookup (populated from adata.obs)
         reason = curation_reason_lookup.get(cluster_id, None)
         if reason is None:
-            # Fallback to building reason from CSV values (may have rounding differences)
+            # Fallback to building reason from row values
             reason = _build_reason_string(row)
+        # ISSUE-006 fix: Compute proportion from n_cells/total_cells
+        # Reference: ft/src/refinement/debug_exports.py:440
+        n_cells = row.get('n_cells', 0)
+        proportion = round(100 * n_cells / total_cells, 2) if total_cells > 0 else 0.0
+
         record = {
             'cluster_id': cluster_id,
             'origin_cluster': origin_cluster,
             'iteration_created': iteration_created,
-            'n_cells': row.get('n_cells', 0),
-            'proportion': row.get('proportion', 0),
+            'n_cells': n_cells,
+            'proportion': proportion,
             'reason': reason,
         }
 
@@ -2431,13 +2285,39 @@ def generate_enhanced_annotations_44col(
             )
 
         # Add quality metrics
-        record['mean_enrichment'] = round(
-            float(row.get('mean_enrichment', 0) or 0), 3
-        )
-        record['mean_positive_fraction'] = round(
-            float(row.get('mean_positive_fraction', 0) or 0), 3
-        )
-        record['confidence_level'] = row.get('confidence_level', '')
+        # ISSUE-006E fix: Compute mean_enrichment, mean_positive_fraction from marker_scores
+        # Reference: ft/src/refinement/debug_exports.py:465-484
+        # The cluster_ann (cluster_annotations_subcluster) does NOT contain these columns.
+        # We must look them up in marker_scores by matching cluster_id and assigned_label.
+        primary_label = row.get('assigned_label', '')
+        mean_enrichment = 0.0
+        mean_positive_fraction = 0.0
+
+        if not marker_scores.empty and "cluster_id" in marker_scores.columns:
+            cluster_scores = marker_scores[marker_scores["cluster_id"].astype(str) == str(cluster_id)].copy()
+            if not cluster_scores.empty and "score" in cluster_scores.columns:
+                # First, try to find the score for the assigned label (primary_label)
+                label_match = cluster_scores[cluster_scores["label"] == primary_label]
+                if not label_match.empty:
+                    # Use the score for the assigned label
+                    label_row = label_match.iloc[0]
+                    mean_enrichment = float(label_row.get("mean_enrichment", 0) or 0)
+                    mean_positive_fraction = float(label_row.get("mean_positive_fraction", 0) or 0)
+                else:
+                    # Fallback: use max score (for Unassigned or missing labels)
+                    sorted_scores = cluster_scores.nlargest(1, "score")
+                    if not sorted_scores.empty:
+                        top_score_row = sorted_scores.iloc[0]
+                        mean_enrichment = float(top_score_row.get("mean_enrichment", 0) or 0)
+                        mean_positive_fraction = float(top_score_row.get("mean_positive_fraction", 0) or 0)
+
+        record['mean_enrichment'] = round(mean_enrichment, 3)
+        record['mean_positive_fraction'] = round(mean_positive_fraction, 3)
+
+        # ISSUE-006E fix: Compute confidence_level from current score
+        # Reference: ft/src/refinement/debug_exports.py:639
+        current_score = record.get(f'score_lvl{iteration}', row.get('assigned_score', 0.0))
+        record['confidence_level'] = _classify_confidence_band(float(current_score) if current_score else 0.0)
 
         # Add runner-up columns using hierarchical sibling-based algorithm
         # ISSUE-003j fix: use get_hierarchical_runner_up instead of global top-2
@@ -2445,7 +2325,7 @@ def generate_enhanced_annotations_44col(
             cluster_id=cluster_id,
             decision_steps=combined_decision_steps,
             cluster_annotations=combined_annotations,
-            marker_scores=scores_df,
+            marker_scores=marker_scores,
         )
         record['runner_up_label'] = runner_up_label
         record['runner_up_score'] = round(runner_up_score, 3) if not pd.isna(runner_up_score) else 0.0
@@ -2474,6 +2354,11 @@ def generate_enhanced_annotations_44col(
     # Reorder columns, only keeping those that exist
     final_cols = [c for c in ref_col_order if c in df.columns]
     df = df[final_cols]
+
+    # Write to file
+    df.to_csv(output_path, index=False)
+    logger.info("Exported enhanced annotations: %d clusters, %d columns → %s",
+                len(df), len(df.columns), output_path)
 
     return df
 
@@ -2718,32 +2603,19 @@ def run_review_exports(
             f'{len(final_cols)} columns)'
         )
 
-        # Generate enhanced version with 44-column format
-        # Pass decision_steps for hierarchical runner-up calculation (ISSUE-003j fix)
-        # Pass adata and cluster_col for ISSUE-005 C.4 fix (curation_reason lookup)
-        enhanced_df = generate_enhanced_annotations_44col(
-            cluster_ann=cluster_ann,
-            scores_df=scores_df,
-            stage_h_dir=stage_h_dir,
+        # Generate enhanced version with 44-column format (aligned with reference)
+        enhanced_path = output_dir / 'cluster_annotations_enhanced.csv'
+        enhanced_df = export_enhanced_annotations(
+            adata,
+            marker_scores=scores_df if scores_df is not None else pd.DataFrame(),
+            output_path=enhanced_path,
+            label_key=cell_type_col or 'cell_type_lvl1',
+            stage_h_annotations_path=Path(stage_h_dir) / 'cluster_annotations.csv' if stage_h_dir else None,
+            stage_h_decision_steps_path=Path(stage_h_dir) / 'decision_steps.csv' if stage_h_dir else None,
             iteration=1,
             logger=logger,
-            decision_steps=decision_steps_df,
-            cluster_annotations=cluster_ann,
-            adata=adata,
-            cluster_col=cluster_col,
         )
-        # Ensure consistent sort order
-        if 'cluster_id' in enhanced_df.columns:
-            enhanced_df = enhanced_df.sort_values(
-                'cluster_id',
-                key=lambda x: x.map(lambda c: _sort_cluster_key(str(c)))
-            ).reset_index(drop=True)
-        enhanced_path = output_dir / 'cluster_annotations_enhanced.csv'
-        enhanced_df.to_csv(enhanced_path, index=False)
         output_paths['cluster_annotations_enhanced'] = enhanced_path
-        logger.info(
-            f'  Wrote cluster_annotations_enhanced.csv ({len(enhanced_df.columns)} columns)'
-        )
     else:
         # Fallback: use simple export
         logger.info('Generating cluster annotations (simple format)...')

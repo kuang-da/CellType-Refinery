@@ -53,6 +53,8 @@ from typing import Any, Dict, List, Optional, Sequence, Set
 import numpy as np
 import pandas as pd
 
+from .workflow_state import RefinementWorkflowState
+
 try:
     import scanpy as sc
 except ImportError:
@@ -1047,25 +1049,47 @@ def run_stage_i(
         logger.warning("Weak leaf detection will be disabled.")
 
     # -------------------------------------------------------------------------
-    # Phase 5: Diagnostic Report
+    # Phase 5: Diagnostic Report (with WorkflowState pattern)
     # -------------------------------------------------------------------------
     logger.info("")
     logger.info("=" * 75)
     logger.info("PHASE 5/7: DIAGNOSTIC REPORT")
     logger.info("=" * 75)
 
-    diagnostic_report = auto_policy.generate_diagnostic_report(
-        cluster_annotations,
-        marker_scores if marker_scores is not None else pd.DataFrame(),
-        eligible_clusters=eligible_clusters,
+    # Load or create workflow state with parent detection
+    # This implements the WorkflowState pattern from ft/src/workflow/state.py
+    # Key behavior: reuse diagnostic from Stage J or previous Stage I if available
+    workflow_state = RefinementWorkflowState.load_or_create(
+        out_dir=output_dir,
+        stage_h_dir=input_path.parent,  # Parent dir of input h5ad
     )
+
+    # Check if we can reuse existing diagnostic from previous stage
+    if workflow_state.should_skip_diagnostic():
+        logger.info("REUSING diagnostic report from previous stage")
+        logger.info("  Source: %s", workflow_state.diagnostic_report_path)
+        if workflow_state.diagnostic_summary:
+            logger.info("  Summary: %s", workflow_state.diagnostic_summary)
+        if workflow_state.parent_dir:
+            logger.info("  Parent: %s", workflow_state.parent_dir)
+
+        # Load existing diagnostic report
+        diagnostic_report = pd.read_csv(workflow_state.get_diagnostic_report_path())
+        logger.info("  Loaded %d cluster recommendations", len(diagnostic_report))
+    else:
+        logger.info("GENERATING new diagnostic report...")
+        diagnostic_report = auto_policy.generate_diagnostic_report(
+            cluster_annotations,
+            marker_scores if marker_scores is not None else pd.DataFrame(),
+            eligible_clusters=eligible_clusters,
+        )
 
     _print_diagnostic_table(diagnostic_report, logger)
     _print_review_summary(
         diagnostic_report, cluster_annotations["cluster_id"].nunique(), logger
     )
 
-    # Save diagnostic report
+    # Save diagnostic report (always save to output dir for consistency)
     output_dir.mkdir(parents=True, exist_ok=True)
     report_path = output_dir / "diagnostic_report.csv"
     diagnostic_report.to_csv(report_path, index=False)
@@ -1178,6 +1202,13 @@ def run_stage_i(
 
     # NOTE: next_iteration_template.yaml export removed (ISSUE-003w)
     # Manual curation templates not needed for automated iteration workflow.
+
+    # Update workflow state: mark execution complete and reset diagnostic for next iteration
+    # This enables iterative refinement by ensuring the diagnose step regenerates
+    # the diagnostic report after execute creates new subclusters
+    workflow_state.mark_execute_complete()
+    workflow_state.save()
+    logger.info("Workflow state updated: execute_complete=True, diagnose_complete reset")
 
     # Summary
     logger.info("")

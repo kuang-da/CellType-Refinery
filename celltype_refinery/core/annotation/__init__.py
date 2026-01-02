@@ -30,7 +30,6 @@ from .export import (
     # Review exports
     export_review_summary,
     export_workflow_state,
-    generate_enhanced_annotations_44col,
     run_review_exports,
     # Group structure exports (NEW)
     GroupConfig,
@@ -108,7 +107,6 @@ __all__ = [
     # Review exports
     "export_review_summary",
     "export_workflow_state",
-    "generate_enhanced_annotations_44col",
     "run_review_exports",
     # Group structure exports (NEW)
     "GroupConfig",

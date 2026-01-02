@@ -685,6 +685,7 @@ class AutoPolicy:
             # Heterogeneity metrics
             "marker_heterogeneity": None,
             # Criteria results
+            "passes_pool": False,  # ISSUE-007A fix: Pool clusters need subclustering
             "passes_low_confidence": False,
             "passes_subtype_signal": False,
             "passes_heterogeneous": False,
@@ -704,6 +705,12 @@ class AutoPolicy:
             result["recommendation_reason"] = f"Too few cells ({n_cells} < {self.config.min_cells})"
             result["triggered_criteria"] = '["TOO_SMALL"]'
             return result
+
+        # ISSUE-007A fix: Check for Pool clusters (from Stage J pooling)
+        # Pool clusters should always be subclustered regardless of score
+        is_pool = row.get("is_pool", False)
+        if is_pool is True or str(is_pool).lower() == "true":
+            result["passes_pool"] = True
 
         # Criterion 1: Low confidence
         result["passes_low_confidence"] = assigned_score < self.config.score_threshold
@@ -781,7 +788,11 @@ class AutoPolicy:
 
     def _get_recommendation(self, result: Dict[str, Any]) -> Tuple[str, str]:
         """Get recommendation based on evaluated criteria."""
-        # Priority order: low_confidence > ambiguous_root > heterogeneous > mixed_population > weak_leaf > subtype_signal (relabel)
+        # Priority order: pool > low_confidence > ambiguous_root > heterogeneous > mixed_population > weak_leaf > subtype_signal (relabel)
+
+        # ISSUE-007A fix: Pool clusters should always be subclustered
+        if result.get("passes_pool", False):
+            return "SUBCLUSTER", "Pool cluster: subclustering required to resolve lineage"
 
         if result["passes_low_confidence"]:
             return "SUBCLUSTER", f"Low confidence: score={result['assigned_score']:.3f} < {self.config.score_threshold}"
@@ -847,6 +858,9 @@ class AutoPolicy:
         """
         codes = []
 
+        # ISSUE-007A fix: Add POOL criterion
+        if result.get("passes_pool", False):
+            codes.append("POOL")
         if result.get("passes_low_confidence", False):
             codes.append("LOW_CONFIDENCE")
         if result.get("passes_ambiguous_root", False):

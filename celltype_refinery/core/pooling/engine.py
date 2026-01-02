@@ -837,6 +837,9 @@ class PoolingEngine:
             unchanged_clusters = set(unchanged_rows["cluster_id"].astype(str).tolist())
 
         # If we have input enhanced annotations, use them for unchanged clusters
+        # NOTE: We copy rows as-is from input (matching reference behavior in
+        # ft/src/pooling/engine.py:574-578). The proportion values come from
+        # Stage I's export_enhanced_annotations() which computes percentages.
         rows = []
         if input_enhanced_annotations is not None and not input_enhanced_annotations.empty:
             input_enhanced_annotations = input_enhanced_annotations.copy()
@@ -869,6 +872,10 @@ class PoolingEngine:
                 "origin_cluster": cid,
                 "iteration_created": 0,
                 "n_cells": n_cells,
+                # NOTE: Pool proportion uses raw fraction (n_cells / len(adata)),
+                # matching reference behavior in ft/src/pooling/engine.py:601.
+                # This differs from non-Pool clusters which use percentages
+                # (from Stage I export_enhanced_annotations()).
                 "proportion": n_cells / len(adata),
                 "reason": "Pool created by Stage J",
                 "cell_type_lvl0": root_label,
