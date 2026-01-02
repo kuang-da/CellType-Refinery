@@ -2269,6 +2269,13 @@ def export_enhanced_annotations(
                     val = 0.0
                 else:
                     val = ''
+
+            # ISSUE-008A.1 fix: Round float columns to 3 decimals (matches reference)
+            # Reference: ft/src/refinement/debug_exports.py:404-420
+            if col in ('score', 'confidence', 'min_margin_along_path', 'coverage'):
+                if val != '' and not pd.isna(val):
+                    val = round(float(val), 3)
+
             record[f'{col}_lvl0'] = val
 
         # Add lvl1 columns (from current cluster_ann)
@@ -2280,9 +2287,18 @@ def export_enhanced_annotations(
                 val = row.get('assigned_label', '')
             elif col == 'score':
                 val = row.get('assigned_score', 0.0)
-            record[f'{col}_lvl{iteration}'] = val if val != '' else (
-                0.0 if 'score' in col or 'confidence' in col or 'coverage' in col else ''
-            )
+
+            # Apply default for empty values
+            if val == '' or (isinstance(val, float) and pd.isna(val)):
+                val = 0.0 if 'score' in col or 'confidence' in col or 'coverage' in col else ''
+
+            # ISSUE-008A.1 fix: Round float columns to 3 decimals (matches reference)
+            # Reference: ft/src/refinement/debug_exports.py:404-420
+            if col in ('score', 'confidence', 'min_margin_along_path', 'coverage'):
+                if val != '' and not pd.isna(val):
+                    val = round(float(val), 3)
+
+            record[f'{col}_lvl{iteration}'] = val
 
         # Add quality metrics
         # ISSUE-006E fix: Compute mean_enrichment, mean_positive_fraction from marker_scores
