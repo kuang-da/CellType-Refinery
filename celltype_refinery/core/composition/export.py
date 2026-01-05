@@ -466,11 +466,14 @@ def export_summary_json(
     # Add cell type summary
     if len(result.composition_global) > 0:
         for _, row in result.composition_global.iterrows():
+            # Support both old and new column names for backward compatibility
+            global_pct = row.get("global_pct", row.get("total_proportion", 0))
+            mean_pct = row.get("mean_pct", row.get("mean_proportion", 0))
             summary["cell_types"].append({
                 "name": row["cell_type"],
                 "total_count": int(row["total_count"]),
-                "total_proportion": float(row["total_proportion"]),
-                "mean_proportion": float(row["mean_proportion"]),
+                "global_pct": float(global_pct),
+                "mean_pct": float(mean_pct),
                 "cv": float(row["cv"]) if pd.notna(row["cv"]) else None,
                 "n_samples_present": int(row["n_samples_present"]),
             })
@@ -563,14 +566,22 @@ def export_all(
 
 def export_all_multi(
     result: MultiColumnResult,
+    config: Any,  # Accept for API compatibility (may not use all fields)
+    input_path: Path,
     output_dir: Path,
 ) -> Dict[str, Dict[str, Path]]:
     """Export results for multiple cell type columns.
+
+    Creates subdirectory per column for organized output structure.
 
     Parameters
     ----------
     result : MultiColumnResult
         Multi-column result
+    config : CompositionConfig
+        Configuration used (for provenance)
+    input_path : Path
+        Path to input file (for provenance)
     output_dir : Path
         Output directory
 
@@ -580,16 +591,87 @@ def export_all_multi(
         Mapping of column name to output paths
     """
     output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     all_paths = {}
 
+    # Export per-column outputs into subdirectories (matching reference pattern)
     for col_name, col_result in result.results.items():
-        # Use column name as prefix
-        prefix = f"{col_name}_" if len(result.columns_analyzed) > 1 else ""
-        all_paths[col_name] = export_all(col_result, output_dir, prefix)
+        col_dir = output_dir / col_name
+        col_dir.mkdir(parents=True, exist_ok=True)
+        all_paths[col_name] = export_all(col_result, col_dir, prefix="")
 
-    # Export multi-column provenance
-    prov_path = output_dir / "multi_column_provenance.json"
-    with open(prov_path, "w") as f:
-        json.dump(result.provenance, f, indent=2, default=str)
+    # Build comparison metrics across columns (required for dashboard)
+    comparison: Dict[str, Dict[str, Any]] = {
+        "n_cell_types": {},
+        "mean_shannon_entropy": {},
+        "mean_simpson_index": {},
+        "mean_evenness": {},
+        "n_significant_enrichments": {},
+    }
+
+    for col, res in result.results.items():
+        # n_cell_types from provenance or composition_global
+        comparison["n_cell_types"][col] = res.provenance.get(
+            "n_cell_types",
+            len(res.composition_global) if res.composition_global is not None else 0
+        )
+
+        # Diversity metrics from diversity_summary DataFrame
+        if res.diversity_summary is not None and len(res.diversity_summary) > 0:
+            ds = res.diversity_summary
+            shannon_row = ds[ds["metric"] == "shannon_entropy"]
+            simpson_row = ds[ds["metric"] == "simpson_index"]
+            evenness_row = ds[ds["metric"] == "evenness"]
+
+            comparison["mean_shannon_entropy"][col] = round(
+                float(shannon_row["mean"].iloc[0]) if len(shannon_row) > 0 else 0, 3
+            )
+            comparison["mean_simpson_index"][col] = round(
+                float(simpson_row["mean"].iloc[0]) if len(simpson_row) > 0 else 0, 3
+            )
+            comparison["mean_evenness"][col] = round(
+                float(evenness_row["mean"].iloc[0]) if len(evenness_row) > 0 else 0, 3
+            )
+        else:
+            comparison["mean_shannon_entropy"][col] = 0
+            comparison["mean_simpson_index"][col] = 0
+            comparison["mean_evenness"][col] = 0
+
+        # n_significant_enrichments from enrichment DataFrame
+        if res.enrichment is not None and len(res.enrichment) > 0:
+            comparison["n_significant_enrichments"][col] = int(
+                res.enrichment["significant"].sum() if "significant" in res.enrichment.columns else 0
+            )
+        else:
+            comparison["n_significant_enrichments"][col] = 0
+
+    # Export multi-column summary at root
+    summary = {
+        "module": "celltype_refinery.core.composition",
+        "version": "1.1.0",
+        "timestamp": datetime.now().isoformat(),
+        "mode": "multi_column",
+        "columns_processed": result.columns_analyzed,
+        "columns_analyzed": result.columns_analyzed,  # Backward compatibility
+        "columns_skipped": getattr(result, "columns_skipped", []),
+        "input_path": str(input_path),
+        "comparison": comparison,
+        "per_column_summary": {
+            col: {
+                "n_cells": res.provenance.get("n_cells", 0),
+                "n_cell_types": res.provenance.get("n_cell_types", 0),
+                "n_samples": res.provenance.get("n_samples", 0),
+            }
+            for col, res in result.results.items()
+        },
+        "total_execution_time_seconds": sum(
+            res.provenance.get("duration_seconds", 0) for res in result.results.values()
+        ),
+    }
+    summary_path = output_dir / "multi_column_summary.json"
+    with open(summary_path, "w") as f:
+        json.dump(summary, f, indent=2, default=str)
+
+    all_paths["_summary"] = {"multi_column_summary": summary_path}
 
     return all_paths

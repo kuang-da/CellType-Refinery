@@ -127,7 +127,7 @@ def compute_diversity_by_group(
     """
     results = []
 
-    for group, group_df in df.groupby(group_col):
+    for group, group_df in df.groupby(group_col, observed=True):
         n_cells = len(group_df)
 
         if n_cells < min_cells:

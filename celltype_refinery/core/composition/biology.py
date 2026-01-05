@@ -294,7 +294,7 @@ class TissueBiologyMetrics(ABC):
             DataFrame with metrics for each group
         """
         results = []
-        for group_id, group_df in df.groupby(group_col):
+        for group_id, group_df in df.groupby(group_col, observed=True):
             result = self.compute_for_group(
                 group_df,
                 str(group_id),
@@ -405,6 +405,119 @@ def get_default_biology_metrics() -> TissueBiologyMetrics:
         GenericBiologyMetrics instance
     """
     return GenericBiologyMetrics()
+
+
+# =============================================================================
+# Organ Registry
+# =============================================================================
+# Maps organ names to their TissueBiologyMetrics implementations.
+# Use get_organ_metrics() to get the appropriate class for an organ.
+
+ORGAN_METRICS_REGISTRY: Dict[str, type] = {
+    # Default/generic
+    "generic": GenericBiologyMetrics,
+    # Add organ-specific implementations here as they are created
+    # "fallopian_tube": FallopianTubeMetrics,  # Added via register_organ_metrics()
+}
+
+# Aliases for common organ names
+ORGAN_ALIASES: Dict[str, str] = {
+    # Fallopian tube aliases
+    "ft": "fallopian_tube",
+    "fallopian": "fallopian_tube",
+    "oviduct": "fallopian_tube",
+    # Add more aliases as needed
+}
+
+
+def register_organ_metrics(
+    organ: str,
+    metrics_class: type,
+    aliases: Optional[List[str]] = None,
+) -> None:
+    """Register an organ-specific metrics class.
+
+    Parameters
+    ----------
+    organ : str
+        Canonical organ name (lowercase, underscores)
+    metrics_class : type
+        TissueBiologyMetrics subclass
+    aliases : List[str], optional
+        Alternative names for this organ
+
+    Example
+    -------
+    >>> from celltype_refinery.core.composition.biology import register_organ_metrics
+    >>> from celltype_refinery.core.composition.biology_ft import FallopianTubeMetrics
+    >>> register_organ_metrics("fallopian_tube", FallopianTubeMetrics, aliases=["ft"])
+    """
+    organ_lower = organ.lower().replace(" ", "_").replace("-", "_")
+    ORGAN_METRICS_REGISTRY[organ_lower] = metrics_class
+
+    if aliases:
+        for alias in aliases:
+            ORGAN_ALIASES[alias.lower()] = organ_lower
+
+
+def get_organ_metrics(organ: Optional[str] = None) -> TissueBiologyMetrics:
+    """Get biology metrics implementation for an organ.
+
+    Parameters
+    ----------
+    organ : str, optional
+        Organ name (case-insensitive). If None or "generic", returns GenericBiologyMetrics.
+
+    Returns
+    -------
+    TissueBiologyMetrics
+        Organ-specific or generic metrics instance
+
+    Raises
+    ------
+    ValueError
+        If organ is not registered
+
+    Example
+    -------
+    >>> metrics = get_organ_metrics("fallopian_tube")
+    >>> print(metrics.tissue_name)
+    'fallopian_tube'
+    """
+    if organ is None:
+        return GenericBiologyMetrics()
+
+    # Normalize organ name
+    organ_lower = organ.lower().replace(" ", "_").replace("-", "_")
+
+    # Check aliases
+    if organ_lower in ORGAN_ALIASES:
+        organ_lower = ORGAN_ALIASES[organ_lower]
+
+    # Look up in registry
+    if organ_lower not in ORGAN_METRICS_REGISTRY:
+        available = list(ORGAN_METRICS_REGISTRY.keys())
+        available_aliases = [f"{k} -> {v}" for k, v in ORGAN_ALIASES.items()]
+        raise ValueError(
+            f"Unknown organ: '{organ}'. "
+            f"Available organs: {available}. "
+            f"Aliases: {available_aliases}"
+        )
+
+    metrics_class = ORGAN_METRICS_REGISTRY[organ_lower]
+    return metrics_class()
+
+
+def list_available_organs() -> List[str]:
+    """List all available organ names.
+
+    Returns
+    -------
+    List[str]
+        List of registered organ names and their aliases
+    """
+    organs = list(ORGAN_METRICS_REGISTRY.keys())
+    return organs
 
 
 def compute_biology_metrics(

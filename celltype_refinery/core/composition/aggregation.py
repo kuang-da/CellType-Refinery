@@ -39,11 +39,15 @@ def compute_composition_by_group(
         - proportion: Proportion of cells (if normalize=True)
     """
     # Count cells per group and cell type
-    counts = df.groupby([group_col, cell_type_col]).size().reset_index(name="count")
+    counts = df.groupby([group_col, cell_type_col], observed=True).size().reset_index(name="count")
+
+    # Rename cell type column to canonical "cell_type" for downstream consistency
+    if cell_type_col != "cell_type":
+        counts = counts.rename(columns={cell_type_col: "cell_type"})
 
     if normalize:
         # Compute total per group
-        totals = counts.groupby(group_col)["count"].transform("sum")
+        totals = counts.groupby(group_col, observed=True)["count"].transform("sum")
         counts["proportion"] = counts["count"] / totals
 
     return counts
@@ -88,11 +92,11 @@ def compute_composition_by_sample(
 
     # Add metadata columns
     if region_col and region_col in df.columns:
-        sample_meta = df.groupby(sample_col)[region_col].first()
+        sample_meta = df.groupby(sample_col, observed=True)[region_col].first()
         composition[region_col] = composition[sample_col].map(sample_meta)
 
     if donor_col and donor_col in df.columns:
-        sample_meta = df.groupby(sample_col)[donor_col].first()
+        sample_meta = df.groupby(sample_col, observed=True)[donor_col].first()
         composition[donor_col] = composition[sample_col].map(sample_meta)
 
     return composition
@@ -117,19 +121,28 @@ def aggregate_by_region(
     Returns
     -------
     pd.DataFrame
-        Regional composition with mean, std, median, n_samples
+        Regional composition with mean_pct, std_pct, median_pct, min_pct, max_pct, n_samples
     """
     if region_col not in composition_df.columns:
         raise ValueError(f"Column '{region_col}' not found in composition DataFrame")
 
-    agg = composition_df.groupby([region_col, "cell_type"])["proportion"].agg([
-        ("mean", "mean"),
-        ("std", "std"),
-        ("median", "median"),
-        ("min", "min"),
-        ("max", "max"),
+    # Check if we have 'percentage' column (0-100 scale) or 'proportion' column (0-1 scale)
+    pct_col = "percentage" if "percentage" in composition_df.columns else "proportion"
+    scale_factor = 1.0 if pct_col == "percentage" else 100.0
+
+    agg = composition_df.groupby([region_col, "cell_type"], observed=True)[pct_col].agg([
+        ("mean_pct", "mean"),
+        ("std_pct", "std"),
+        ("median_pct", "median"),
+        ("min_pct", "min"),
+        ("max_pct", "max"),
         ("n_samples", "count"),
     ]).reset_index()
+
+    # Scale to percentage if needed
+    if scale_factor != 1.0:
+        for col in ["mean_pct", "std_pct", "median_pct", "min_pct", "max_pct"]:
+            agg[col] = agg[col] * scale_factor
 
     # Order regions if specified
     if region_order:
@@ -164,7 +177,7 @@ def aggregate_by_donor(
     if donor_col not in composition_df.columns:
         raise ValueError(f"Column '{donor_col}' not found in composition DataFrame")
 
-    agg = composition_df.groupby([donor_col, "cell_type"])["proportion"].agg([
+    agg = composition_df.groupby([donor_col, "cell_type"], observed=True)["proportion"].agg([
         ("mean", "mean"),
         ("std", "std"),
         ("n_samples", "count"),
@@ -192,38 +205,47 @@ def compute_global_summary(
         Global summary with columns:
         - cell_type
         - total_count
-        - total_proportion
-        - mean_proportion
-        - std_proportion
-        - cv (coefficient of variation)
         - n_samples_present
-        - presence_rate
+        - mean_pct (percentage)
+        - std_pct (percentage)
+        - median_pct (percentage)
+        - min_pct (percentage)
+        - max_pct (percentage)
+        - global_pct (percentage)
+        - cv (coefficient of variation)
     """
-    # Total counts
-    totals = composition_df.groupby("cell_type").agg(
+    # Check if we have 'percentage' column (0-100 scale) or 'proportion' column (0-1 scale)
+    pct_col = "percentage" if "percentage" in composition_df.columns else "proportion"
+    scale_factor = 1.0 if pct_col == "percentage" else 100.0
+
+    # Total counts and statistics
+    totals = composition_df.groupby("cell_type", observed=True).agg(
         total_count=("count", "sum"),
-        mean_proportion=("proportion", "mean"),
-        std_proportion=("proportion", "std"),
-        n_samples_present=("proportion", lambda x: (x > 0).sum()),
+        n_samples_present=(pct_col, lambda x: (x > 0).sum()),
+        mean_pct=(pct_col, "mean"),
+        std_pct=(pct_col, "std"),
+        median_pct=(pct_col, "median"),
+        min_pct=(pct_col, "min"),
+        max_pct=(pct_col, "max"),
     ).reset_index()
 
-    # Compute total proportion
+    # Scale to percentage if needed
+    if scale_factor != 1.0:
+        for col in ["mean_pct", "std_pct", "median_pct", "min_pct", "max_pct"]:
+            totals[col] = totals[col] * scale_factor
+
+    # Compute global percentage
     grand_total = totals["total_count"].sum()
-    totals["total_proportion"] = totals["total_count"] / grand_total
+    totals["global_pct"] = 100.0 * totals["total_count"] / grand_total
 
-    # Compute CV
-    totals["cv"] = totals["std_proportion"] / totals["mean_proportion"]
+    # Compute CV (coefficient of variation)
+    totals["cv"] = totals["std_pct"] / totals["mean_pct"].replace(0, np.nan)
     totals["cv"] = totals["cv"].replace([np.inf, -np.inf], np.nan)
-
-    # Presence rate
-    n_samples = composition_df["sample_id"].nunique() if "sample_id" in composition_df.columns else \
-                composition_df.groupby("cell_type").size().max()
-    totals["presence_rate"] = totals["n_samples_present"] / n_samples
 
     # Filter by minimum presence
     totals = totals[totals["n_samples_present"] >= min_presence]
 
-    # Sort by total count
+    # Sort by total count (most abundant first)
     totals = totals.sort_values("total_count", ascending=False)
 
     return totals
@@ -259,6 +281,7 @@ def create_composition_wide(
         values=value_col,
         fill_value=fill_value,
         aggfunc="first",
+        observed=True,
     )
 
     return wide
@@ -266,7 +289,7 @@ def create_composition_wide(
 
 def compute_rare_cell_types(
     global_summary: pd.DataFrame,
-    threshold: float = 0.01,
+    threshold: float = 1.0,
 ) -> pd.DataFrame:
     """Identify rare cell types.
 
@@ -275,14 +298,19 @@ def compute_rare_cell_types(
     global_summary : pd.DataFrame
         Output from compute_global_summary
     threshold : float
-        Proportion threshold for rare classification
+        Percentage threshold for rare classification (default: 1.0 = 1%)
 
     Returns
     -------
     pd.DataFrame
         Rare cell types with their statistics
     """
-    rare = global_summary[global_summary["total_proportion"] < threshold].copy()
+    # Support both old (total_proportion) and new (global_pct) column names
+    pct_col = "global_pct" if "global_pct" in global_summary.columns else "total_proportion"
+    # If using old column (proportion 0-1), convert threshold to match
+    if pct_col == "total_proportion":
+        threshold = threshold / 100.0
+    rare = global_summary[global_summary[pct_col] < threshold].copy()
     rare["is_rare"] = True
     return rare
 
@@ -335,8 +363,8 @@ def compute_composition_differences(
     g1 = composition_df[composition_df[group_col] == group1]
     g2 = composition_df[composition_df[group_col] == group2]
 
-    mean1 = g1.groupby("cell_type")["proportion"].mean()
-    mean2 = g2.groupby("cell_type")["proportion"].mean()
+    mean1 = g1.groupby("cell_type", observed=True)["proportion"].mean()
+    mean2 = g2.groupby("cell_type", observed=True)["proportion"].mean()
 
     diff_df = pd.DataFrame({
         "cell_type": mean1.index.union(mean2.index),

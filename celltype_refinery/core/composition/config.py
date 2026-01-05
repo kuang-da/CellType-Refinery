@@ -32,6 +32,10 @@ class PatternConfig:
         Patterns matching immune cell types
     endothelial : List[str]
         Patterns matching endothelial cell types
+    ciliated : List[str]
+        Patterns matching ciliated epithelial cell types (FT-specific)
+    secretory : List[str]
+        Patterns matching secretory epithelial cell types (FT-specific)
     custom : Dict[str, List[str]]
         Additional custom pattern categories
     """
@@ -51,6 +55,12 @@ class PatternConfig:
     endothelial: List[str] = field(default_factory=lambda: [
         "Endothel", "Vascular", "Lymphatic"
     ])
+    ciliated: List[str] = field(default_factory=lambda: [
+        "Ciliated", "FOXJ1"
+    ])
+    secretory: List[str] = field(default_factory=lambda: [
+        "Secretory", "PAX8", "Glandular", "Peg"
+    ])
     custom: Dict[str, List[str]] = field(default_factory=dict)
 
     def get_all_categories(self) -> Dict[str, List[str]]:
@@ -67,6 +77,8 @@ class PatternConfig:
             "smooth_muscle": self.smooth_muscle,
             "immune": self.immune,
             "endothelial": self.endothelial,
+            "ciliated": self.ciliated,
+            "secretory": self.secretory,
         }
         categories.update(self.custom)
         return categories
@@ -85,7 +97,7 @@ class PatternConfig:
         PatternConfig
             Configuration instance
         """
-        standard_keys = {"epithelial", "stromal", "smooth_muscle", "immune", "endothelial"}
+        standard_keys = {"epithelial", "stromal", "smooth_muscle", "immune", "endothelial", "ciliated", "secretory"}
         standard = {k: v for k, v in data.items() if k in standard_keys}
         custom = {k: v for k, v in data.items() if k not in standard_keys and k != "custom"}
 
