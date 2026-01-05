@@ -39,7 +39,7 @@ With harmonization:
     >>> harmonize_config = HarmonizeConfig.default()
     >>> engine = ConsolidationEngine(harmonize_config=harmonize_config)
     >>> result = engine.execute(adata, diagnostic_report, marker_scores)
-    >>> # adata.obs now has cell_type_fine and cell_type_broad columns
+    >>> # adata.obs now has cell_type_multiomics and cell_type_broad columns
 """
 
 # Configuration

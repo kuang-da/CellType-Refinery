@@ -100,7 +100,7 @@ class HarmonizeConfig:
         Set of intermediate type names (not leaf, not root)
     """
 
-    version: str = "default_v1"
+    version: str = "phenocycler_twolevel_v1"
     fine_mapping: Dict[str, str] = field(default_factory=dict)
     immune_to_na: List[str] = field(default_factory=list)
     misc_to_na: List[str] = field(default_factory=list)
@@ -141,7 +141,7 @@ class HarmonizeConfig:
             data = yaml.safe_load(f)
 
         return cls(
-            version=data.get("version", "default_v1"),
+            version=data.get("version", "phenocycler_twolevel_v1"),
             fine_mapping=data.get("fine_mapping", {}),
             immune_to_na=data.get("immune_to_na", []),
             misc_to_na=data.get("misc_to_na", []),
@@ -161,7 +161,7 @@ class HarmonizeConfig:
             Default configuration
         """
         return cls(
-            version="default_v1",
+            version="phenocycler_twolevel_v1",
             fine_mapping={
                 # Epithelium subtypes
                 "Ciliated Epithelium": "Ciliated epithelium",
@@ -530,7 +530,7 @@ def harmonize_single_label(
         elif info.annotation_level == "unassigned":
             mapping_notes = "unassigned"
         elif info.base_label in config.misc_to_na:
-            mapping_notes = "misc_no_equivalent"
+            mapping_notes = "misc_no_multiomics_equivalent"
         elif info.base_label in config.immune_to_na:
             mapping_notes = "immune_strict_na"
         elif info.annotation_level == "intermediate":
@@ -539,7 +539,7 @@ def harmonize_single_label(
             mapping_notes = "unmapped_subtype"
 
     return {
-        "cell_type_fine": fine,
+        "cell_type_multiomics": fine,
         "cell_type_broad": broad,
         "root_label": root_label,
         "annotation_level": info.annotation_level,
@@ -554,7 +554,7 @@ def harmonize_adata(
     adata: "sc.AnnData",
     diagnostic_report: pd.DataFrame,
     config: HarmonizeConfig,
-    label_col: str = "cell_type_final",
+    label_col: str = "cell_type_phenocycler",
     cluster_col: str = "cluster_lvl1",
 ) -> None:
     """Add harmonized columns to AnnData.obs in-place.
@@ -592,7 +592,7 @@ def harmonize_adata(
     # Initialize output columns
     n_cells = len(adata)
     results = {
-        "cell_type_fine": [None] * n_cells,
+        "cell_type_multiomics": [None] * n_cells,
         "cell_type_broad": [""] * n_cells,
         "root_label": [None] * n_cells,
         "annotation_level": [""] * n_cells,
@@ -619,7 +619,7 @@ def harmonize_adata(
             results[key][i] = value
 
     # Add columns to adata.obs
-    adata.obs["cell_type_fine"] = pd.Categorical(results["cell_type_fine"])
+    adata.obs["cell_type_multiomics"] = pd.Categorical(results["cell_type_multiomics"])
     adata.obs["cell_type_broad"] = pd.Categorical(results["cell_type_broad"])
     adata.obs["root_label"] = results["root_label"]
     adata.obs["annotation_level"] = pd.Categorical(results["annotation_level"])
@@ -629,7 +629,7 @@ def harmonize_adata(
     adata.obs["mapping_notes"] = results["mapping_notes"]
 
     # Log summary
-    fine_counts = adata.obs["cell_type_fine"].value_counts(dropna=False)
+    fine_counts = adata.obs["cell_type_multiomics"].value_counts(dropna=False)
     broad_counts = adata.obs["cell_type_broad"].value_counts()
     n_orphan = sum(results["is_orphan"])
     n_hybrid = sum(1 for h in results["hybrid_pair"] if h is not None)

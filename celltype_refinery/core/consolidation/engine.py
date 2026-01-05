@@ -1,7 +1,7 @@
 """ConsolidationEngine - main orchestrator for final cell-type consolidation.
 
 This engine takes refinement output (refined.h5ad + diagnostic_report.csv)
-and produces a single cell_type_final column with clean, production-ready labels.
+and produces a single cell_type_phenocycler column with clean, production-ready labels.
 """
 
 from dataclasses import dataclass, field
@@ -114,7 +114,7 @@ class ConsolidationEngine:
     """Engine for final cell-type label consolidation.
 
     Takes refinement output (refined.h5ad + diagnostic_report.csv) and
-    produces a single cell_type_final column with clean labels.
+    produces a single cell_type_phenocycler column with clean labels.
 
     Decision Logic:
     1. Start with assigned_label from diagnostic_report
@@ -129,7 +129,7 @@ class ConsolidationEngine:
     config : ConsolidationConfig, optional
         Configuration with manual overrides and relabel rules
     output_col : str
-        Output column name for final labels (default: cell_type_final)
+        Output column name for final labels (default: cell_type_phenocycler)
     reason_col : str
         Output column name for decision reasons (default: consolidation_reason)
     enable_orphan_rescue : bool
@@ -148,7 +148,7 @@ class ConsolidationEngine:
     def __init__(
         self,
         config: Optional[ConsolidationConfig] = None,
-        output_col: str = "cell_type_final",
+        output_col: str = "cell_type_phenocycler",
         reason_col: str = "consolidation_reason",
         enable_orphan_rescue: bool = True,
         orphan_suffix: str = "(orphan)",
@@ -613,11 +613,11 @@ class ConsolidationEngine:
         result : ConsolidationResult
             Result object to populate
         """
-        # Simplified label distribution (for cell_type_final)
+        # Simplified label distribution (for cell_type_phenocycler)
         label_counts = adata.obs[self.output_col].value_counts()
         result.label_distribution = label_counts.to_dict()
 
-        # Detailed label distribution (for cell_type_final_detailed)
+        # Detailed label distribution (for cell_type_phenocycler_detailed)
         detailed_col = f"{self.output_col}_detailed"
         if detailed_col in adata.obs.columns:
             detailed_counts = adata.obs[detailed_col].value_counts()

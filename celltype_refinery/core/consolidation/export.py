@@ -34,7 +34,7 @@ def export_consolidation_summary(
     adata: "sc.AnnData",
     result: ConsolidationResult,
     output_path: Path,
-    output_col: str = "cell_type_final",
+    output_col: str = "cell_type_phenocycler",
 ) -> pd.DataFrame:
     """Export final label distribution summary with harmonized columns.
 
@@ -70,7 +70,7 @@ def export_consolidation_summary(
     # Build lookup for harmonized values per label
     # All cells with the same label have the same harmonized values
     harmonized_cols = [
-        "cell_type_fine",
+        "cell_type_multiomics",
         "cell_type_broad",
         "root_label",
         "annotation_level",
@@ -96,7 +96,7 @@ def export_consolidation_summary(
         proportion = count / result.n_cells_total if result.n_cells_total > 0 else 0
 
         row = {
-            "cell_type_final": label,
+            "cell_type_phenocycler": label,
             "n_cells": count,
             "proportion": round(proportion, 4),
             "percentage": round(proportion * 100, 2),
@@ -110,8 +110,8 @@ def export_consolidation_summary(
         # Add harmonized columns
         if label in harmonized_lookup:
             h = harmonized_lookup[label]
-            fine = h.get("cell_type_fine")
-            row["cell_type_fine"] = "NA" if pd.isna(fine) else str(fine)
+            fine = h.get("cell_type_multiomics")
+            row["cell_type_multiomics"] = "NA" if pd.isna(fine) else str(fine)
             row["cell_type_broad"] = str(h.get("cell_type_broad", ""))
             row["root_label"] = str(h.get("root_label", "")) if h.get("root_label") else ""
             row["annotation_level"] = str(h.get("annotation_level", ""))
@@ -161,8 +161,8 @@ def export_consolidation_summary_detailed(
         simplified = simplify_label(label)
 
         row = {
-            "cell_type_final_detailed": label,
-            "cell_type_final": simplified,
+            "cell_type_phenocycler_detailed": label,
+            "cell_type_phenocycler": simplified,
             "n_cells": count,
             "proportion": round(proportion, 4),
             "percentage": round(proportion * 100, 2),
@@ -323,7 +323,7 @@ def export_orphan_report(
         })
 
     df = pd.DataFrame(rows)
-    df = df.sort_values("n_cells", ascending=False)
+    df = df.sort_values(["n_cells", "cluster_id"], ascending=[False, True])
     df.to_csv(output_path, index=False)
     logger.info(f"Orphan report saved to {output_path} ({len(df)} candidates)")
 
@@ -399,7 +399,7 @@ def export_orphan_summary(
         })
 
     df = pd.DataFrame(rows)
-    df = df.sort_values("n_cells", ascending=False)
+    df = df.sort_values(["n_cells", "subtype"], ascending=[False, True])
     df.to_csv(output_path, index=False)
     logger.info(f"Orphan summary saved to {output_path}")
 
@@ -600,14 +600,14 @@ def export_harmonized_summary(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Check if harmonized columns exist
-    if "cell_type_fine" not in adata.obs.columns:
+    if "cell_type_multiomics" not in adata.obs.columns:
         logger.warning("Harmonized columns not found in adata.obs, skipping export")
         return pd.DataFrame()
 
     n_cells = len(adata)
 
     # Fine distribution
-    fine_counts = adata.obs["cell_type_fine"].value_counts(dropna=False)
+    fine_counts = adata.obs["cell_type_multiomics"].value_counts(dropna=False)
     fine_rows = []
     for label, count in fine_counts.items():
         label_str = "NA" if pd.isna(label) else str(label)
@@ -651,7 +651,7 @@ def export_all(
     mapping_df: pd.DataFrame,
     input_path: Path,
     output_dir: Path,
-    output_col: str = "cell_type_final",
+    output_col: str = "cell_type_phenocycler",
 ) -> Dict[str, Path]:
     """Export all consolidation outputs.
 
@@ -724,7 +724,7 @@ def export_all(
         export_iel_summary(result, outputs["iel_summary"])
 
     # Harmonized summary (if harmonization was applied)
-    if "cell_type_fine" in adata.obs.columns:
+    if "cell_type_multiomics" in adata.obs.columns:
         outputs["harmonized_summary"] = output_dir / "harmonized_summary.csv"
         export_harmonized_summary(adata, outputs["harmonized_summary"])
 
