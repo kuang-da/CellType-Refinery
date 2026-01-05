@@ -87,7 +87,14 @@ from .biology import (
     compute_percentage,
     compute_biology_metrics,
     get_default_biology_metrics,
+    # Organ registry
+    get_organ_metrics,
+    register_organ_metrics,
+    list_available_organs,
 )
+
+# Organ-specific biology metrics (auto-registers on import)
+from .biology_ft import FallopianTubeMetrics, validate_ft_expectations
 
 # Regional enrichment
 from .enrichment import (
@@ -126,6 +133,13 @@ from .export import (
     export_all_multi,
 )
 
+# Visualization
+from .viz import (
+    generate_all_figures,
+    generate_all_figures_multi,
+    generate_dashboard,
+)
+
 __all__ = [
     # Configuration
     "CompositionConfig",
@@ -161,6 +175,13 @@ __all__ = [
     "compute_percentage",
     "compute_biology_metrics",
     "get_default_biology_metrics",
+    # Organ registry
+    "get_organ_metrics",
+    "register_organ_metrics",
+    "list_available_organs",
+    # Organ-specific biology
+    "FallopianTubeMetrics",
+    "validate_ft_expectations",
     # Enrichment
     "compute_regional_enrichment",
     "get_significant_enrichments",
@@ -189,4 +210,8 @@ __all__ = [
     "export_summary_json",
     "export_all",
     "export_all_multi",
+    # Visualization
+    "generate_all_figures",
+    "generate_all_figures_multi",
+    "generate_dashboard",
 ]
