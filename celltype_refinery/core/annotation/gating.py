@@ -309,7 +309,7 @@ def _precompute_marker_stats(
     cluster_key: str,
     markers: List[str],
     positive_quantile: float = 0.75,
-    layer: str = "X",
+    layer: str = "batchcorr",
     logger: Optional[logging.Logger] = None,
 ) -> Dict[str, Dict[str, Dict[str, float]]]:
     """Pre-compute per-marker statistics for all clusters.
@@ -927,7 +927,7 @@ def assign_labels_hierarchical(
     marker_scores: pd.DataFrame,
     adata: Optional["sc.AnnData"] = None,
     cluster_key: str = "cluster_lvl0",
-    layer: str = "X",
+    layer: str = "batchcorr",
     params: Optional[dict] = None,
     logger: Optional[logging.Logger] = None,
     marker_sets: Optional[Sequence[MarkerSet]] = None,

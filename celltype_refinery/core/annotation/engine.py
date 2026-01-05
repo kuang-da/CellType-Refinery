@@ -84,7 +84,7 @@ class AnnotationParams:
 
     cluster_key: str = "cluster_lvl0"
     label_col: str = "cell_type_auto"
-    layer: str = "X"
+    layer: str = "batchcorr"
     positive_quantile: float = 0.75
     de_key: str = "de_wilcoxon"
     de_bonus: float = 0.6

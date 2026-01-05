@@ -267,7 +267,7 @@ def compute_marker_scores(
     de_rank_lookup: Optional[Dict[str, Dict[str, Any]]] = None,
     marker_doc_freq: Optional[Dict[str, int]] = None,
     de_commonness_alpha: float = 0.5,
-    layer: str = "X",
+    layer: str = "batchcorr",
 ) -> Union[pd.DataFrame, Tuple[pd.DataFrame, pd.DataFrame]]:
     """Score clusters against marker sets with anti-marker penalties.
 
@@ -813,7 +813,7 @@ def compute_marker_scores_parallel(
     de_rank_lookup: Optional[Dict[str, Dict[str, Any]]] = None,
     marker_doc_freq: Optional[Dict[str, int]] = None,
     de_commonness_alpha: float = 0.5,
-    layer: str = "X",
+    layer: str = "batchcorr",
     n_workers: int = 1,
     batch_size: int = 50,
 ) -> Union[pd.DataFrame, Tuple[pd.DataFrame, pd.DataFrame]]:
