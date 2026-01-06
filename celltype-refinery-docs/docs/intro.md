@@ -15,34 +15,38 @@ CellType-Refinery is a Python package designed for processing multiplexed imagin
 
 ```mermaid
 flowchart LR
-    subgraph Preprocessing
-        A[Data Loading] --> B[Cell QC]
-        B --> C[Normalization]
-        C --> D[Alignment]
-        D --> E[Batch Correction]
-        E --> F[Merge]
+    subgraph prep[Preprocessing]
+        PRE[Stage A-F]
     end
 
-    subgraph Annotation
-        F --> G[Clustering]
-        G --> H[Marker Scoring]
-        H --> I[Hierarchical Gating]
+    subgraph annotation[Annotation]
+        H[Coarse Clustering]
     end
 
-    subgraph Refinement
-        I --> J[Diagnostic]
-        J --> K{Execute?}
-        K -->|Yes| L[Apply Refinements]
-        K -->|No| M[Review Plan]
-        M --> J
+    subgraph refinement[Refinement Cycle]
+        I1["Iterative Subclustering ×n"] --> J[Rebatching]
+        J --> I2["Iterative Subclustering ×n"]
     end
 
-    subgraph Analysis
-        L --> N[Consolidation]
-        N --> O[Composition]
-        O --> P[Spatial]
-        P --> Q[Review]
+    subgraph analysis[Downstream Analysis]
+        N[Consolidation] --> COMP[Composition]
+        COMP --> L[Spatial Analysis]
     end
+
+    PRE --> H
+    H --> I1
+    I2 --> N
+```
+
+### Preprocessing Details
+
+```mermaid
+flowchart LR
+    A[Data Loading] --> B[Cell QC]
+    B --> C[Normalization]
+    C --> D[Alignment]
+    D --> E[Batch Correction]
+    E --> F[Data Merge]
 ```
 
 ## Key Features
@@ -88,7 +92,6 @@ Configure CellType-Refinery for any tissue type via YAML templates and JSON mark
 
 - **Composition**: Cell-type statistics, diversity metrics (Shannon, Simpson)
 - **Spatial**: Neighborhood enrichment, Moran's I, cell-type interactions
-- **Review**: Configurable flagging rules for quality validation
 
 ## Quick Links
 
