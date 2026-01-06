@@ -1,7 +1,14 @@
 """Visualization module for CellType-Refinery.
 
-Provides plotting functions for composition, spatial, and UMAP visualizations.
-Requires optional 'viz' dependencies: matplotlib, seaborn.
+Provides plotting functions for composition, spatial, and marker visualizations.
+Requires optional 'viz' dependencies: matplotlib, plotly.
+
+Submodules
+----------
+markers
+    Marker map hierarchy visualizations (tree, sunburst, network, etc.)
 """
 
-# Exports will be added as submodules are implemented
+from . import markers
+
+__all__ = ["markers"]
