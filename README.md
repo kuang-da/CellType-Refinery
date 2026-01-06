@@ -106,9 +106,13 @@ celltype_refinery/
 
 ## Documentation
 
-- [Quickstart Guide](docs/quickstart.md)
-- [Configuration Reference](docs/configuration.md)
-- [API Documentation](docs/api/)
+**Full documentation**: [https://kuang-da.github.io/CellType-Refinery/](https://kuang-da.github.io/CellType-Refinery/)
+
+- [Installation](https://kuang-da.github.io/CellType-Refinery/docs/getting-started/installation)
+- [Quickstart Guide](https://kuang-da.github.io/CellType-Refinery/docs/getting-started/quickstart)
+- [Core Workflows](https://kuang-da.github.io/CellType-Refinery/docs/core-workflows/workflow-overview)
+- [CLI Reference](https://kuang-da.github.io/CellType-Refinery/docs/cli/overview)
+- [Configuration](https://kuang-da.github.io/CellType-Refinery/docs/configuration/marker-maps)
 
 ## License
 
