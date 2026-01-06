@@ -42,12 +42,21 @@ from .graph_io import (
     load_graphs_for_samples,
 )
 
+# Parallel execution
+from .parallel import (
+    SampleInput,
+    compute_single_permutation,
+    batch_permutations_parallel,
+    run_permutations_sequential,
+    process_samples_adaptive,
+    get_optimal_thread_allocation,
+)
+
 # Engine
 from .engine import (
     SpatialEngine,
     SpatialResult,
     MultiColumnSpatialResult,
-    SampleInput,
 )
 
 # Neighborhood Enrichment
@@ -95,6 +104,9 @@ from .export import (
     export_all,
 )
 
+# Visualization
+from .viz import generate_all_visualizations
+
 __all__ = [
     # Version
     "__version__",
@@ -109,11 +121,17 @@ __all__ = [
     "list_available_graphs",
     "validate_graphs_dir",
     "load_graphs_for_samples",
+    # Parallel
+    "SampleInput",
+    "compute_single_permutation",
+    "batch_permutations_parallel",
+    "run_permutations_sequential",
+    "process_samples_adaptive",
+    "get_optimal_thread_allocation",
     # Engine
     "SpatialEngine",
     "SpatialResult",
     "MultiColumnSpatialResult",
-    "SampleInput",
     # Neighborhood Enrichment
     "NeighborhoodEnrichmentResult",
     "compute_enrichment_zscores",
@@ -144,4 +162,6 @@ __all__ = [
     "create_provenance",
     "export_provenance",
     "export_all",
+    # Visualization
+    "generate_all_visualizations",
 ]

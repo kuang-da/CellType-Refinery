@@ -44,22 +44,9 @@ from .diversity import (
     compute_diversity_for_sample,
     aggregate_diversity_results,
 )
+from .parallel import SampleInput
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class SampleInput:
-    """Input data for processing a single sample."""
-
-    sample_id: str
-    graph: sparse.csr_matrix
-    cell_types: np.ndarray
-    region: Optional[str] = None
-
-    @property
-    def n_cells(self) -> int:
-        return len(self.cell_types)
 
 
 @dataclass
@@ -297,17 +284,46 @@ class SpatialEngine:
 
         logger.info(f"Processing {len(samples)} samples ({result.n_cells_total:,} cells)")
 
+        # Build analysis plan description
+        analyses = []
+        if not skip_enrichment:
+            analyses.append(f"enrichment ({self.config.permutation.n_permutations} perms)")
+        if not skip_interaction:
+            analyses.append("interaction")
+        if not skip_morans:
+            analyses.append("morans")
+        if not skip_diversity:
+            analyses.append("diversity")
+        logger.info(f"Analyses: {', '.join(analyses)}")
+
         enrichment_results = []
         interaction_results = []
         morans_results = []
         diversity_results = []
         sample_ids = []
 
-        for sample in samples:
+        n_samples = len(samples)
+        sample_start_time = time.time()
+
+        for idx, sample in enumerate(samples, 1):
             sample_ids.append(sample.sample_id)
+            iter_start = time.time()
+
+            # Progress logging
+            elapsed = time.time() - sample_start_time
+            if idx > 1:
+                avg_per_sample = elapsed / (idx - 1)
+                remaining = avg_per_sample * (n_samples - idx + 1)
+                logger.info(
+                    f"[{idx}/{n_samples}] {sample.sample_id} ({sample.n_cells:,} cells) | "
+                    f"elapsed: {elapsed:.0f}s, ETA: {remaining:.0f}s"
+                )
+            else:
+                logger.info(f"[{idx}/{n_samples}] {sample.sample_id} ({sample.n_cells:,} cells)")
 
             if not skip_enrichment:
                 try:
+                    enrich_start = time.time()
                     z, p, n_c, n_e = compute_neighborhood_enrichment_sample(
                         graph=sample.graph,
                         cell_types=sample.cell_types,
@@ -317,11 +333,13 @@ class SpatialEngine:
                         seed=self.config.permutation.seed,
                     )
                     enrichment_results.append((z, p, n_c, n_e))
+                    logger.debug(f"  └─ enrichment: {time.time() - enrich_start:.1f}s")
                 except Exception as e:
                     logger.warning(f"Enrichment failed for {sample.sample_id}: {e}")
 
             if not skip_interaction:
                 try:
+                    inter_start = time.time()
                     interactions, _, _ = compute_interactions_for_sample(
                         sample_id=sample.sample_id,
                         graph=sample.graph,
@@ -329,11 +347,13 @@ class SpatialEngine:
                         valid_types=valid_types,
                     )
                     interaction_results.append(interactions)
+                    logger.debug(f"  └─ interaction: {time.time() - inter_start:.1f}s")
                 except Exception as e:
                     logger.warning(f"Interaction failed for {sample.sample_id}: {e}")
 
             if not skip_morans:
                 try:
+                    morans_start = time.time()
                     morans = compute_morans_for_sample(
                         sample_id=sample.sample_id,
                         graph=sample.graph,
@@ -342,11 +362,13 @@ class SpatialEngine:
                         min_cells_per_type=self.config.min_cells_per_type,
                     )
                     morans_results.append(morans)
+                    logger.debug(f"  └─ morans: {time.time() - morans_start:.1f}s")
                 except Exception as e:
                     logger.warning(f"Moran's I failed for {sample.sample_id}: {e}")
 
             if not skip_diversity:
                 try:
+                    div_start = time.time()
                     diversity = compute_diversity_for_sample(
                         sample_id=sample.sample_id,
                         graph=sample.graph,
@@ -355,8 +377,16 @@ class SpatialEngine:
                         region=sample.region,
                     )
                     diversity_results.append(diversity)
+                    logger.debug(f"  └─ diversity: {time.time() - div_start:.1f}s")
                 except Exception as e:
                     logger.warning(f"Diversity failed for {sample.sample_id}: {e}")
+
+        # Log total sample processing time
+        total_sample_time = time.time() - sample_start_time
+        logger.info(f"Sample processing complete: {total_sample_time:.1f}s ({total_sample_time/n_samples:.1f}s/sample avg)")
+
+        # Aggregation phase
+        logger.info("Aggregating results...")
 
         if enrichment_results:
             result.neighborhood_enrichment = aggregate_enrichment_results(
