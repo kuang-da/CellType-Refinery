@@ -6,6 +6,32 @@ sidebar_position: 3
 
 Identify cluster-specific markers via DE analysis.
 
+```mermaid
+flowchart LR
+    subgraph Input
+        A[Clustered<br/>AnnData]
+    end
+
+    subgraph Analysis["DE Analysis"]
+        B[For each cluster]
+        C[Cluster vs Rest<br/>Wilcoxon test]
+        D[Rank by<br/>log fold change]
+        E[Select top N<br/>genes]
+    end
+
+    subgraph Output
+        F[de_genes.csv<br/>Top markers]
+        G[de_stats.csv<br/>Full statistics]
+    end
+
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+    E --> F
+    E --> G
+```
+
 ## Method
 
 Wilcoxon rank-sum test per cluster vs. rest.

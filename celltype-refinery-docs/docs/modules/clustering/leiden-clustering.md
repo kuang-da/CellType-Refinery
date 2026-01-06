@@ -6,6 +6,28 @@ sidebar_position: 2
 
 Community detection using the Leiden algorithm.
 
+```mermaid
+flowchart LR
+    subgraph Input
+        A[merged.h5ad<br/>batchcorr layer]
+    end
+
+    subgraph Pipeline["Clustering Pipeline"]
+        B[Scale Data] --> C[PCA<br/>n_pcs=30]
+        C --> D[k-NN Graph<br/>k=15]
+        D --> E[Leiden<br/>resolution=0.6]
+    end
+
+    subgraph Output
+        F[cluster_lvl0<br/>assignments]
+    end
+
+    A --> B
+    E --> F
+
+    style E fill:#FFD700
+```
+
 ## Algorithm
 
 1. Compute PCA embeddings
