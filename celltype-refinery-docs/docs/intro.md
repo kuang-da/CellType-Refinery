@@ -92,10 +92,10 @@ Configure CellType-Refinery for any tissue type via YAML templates and JSON mark
 
 ## Quick Links
 
-- [Installation](getting-started/installation) - Get CellType-Refinery installed
-- [Quickstart](getting-started/quickstart) - Run your first annotation in 5 minutes
-- [Core Workflows](core-workflows/workflow-overview) - Learn the main usage patterns
-- [CLI Reference](cli/overview) - Command-line interface documentation
+- [Installation](./getting-started/installation) - Get CellType-Refinery installed
+- [Quickstart](./getting-started/quickstart) - Run your first annotation in 5 minutes
+- [Core Workflows](./core-workflows/workflow-overview) - Learn the main usage patterns
+- [CLI Reference](./cli/overview) - Command-line interface documentation
 
 ## Package Structure
 
