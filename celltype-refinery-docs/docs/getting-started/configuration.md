@@ -6,6 +6,22 @@ sidebar_position: 3
 
 CellType-Refinery uses YAML configuration files for tissue-specific parameters and pipeline settings.
 
+```mermaid
+flowchart TD
+    subgraph Precedence["Configuration Precedence (later overrides)"]
+        direction TB
+        P1["1. Package defaults"]
+        P2["2. Tissue template"]
+        P3["3. Pipeline config"]
+        P4["4. Environment vars"]
+        P5["5. CLI arguments"]
+    end
+
+    P1 --> P2 --> P3 --> P4 --> P5
+
+    style P5 fill:#90EE90
+```
+
 ## Configuration Files
 
 ### Tissue Templates

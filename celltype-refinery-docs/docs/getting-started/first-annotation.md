@@ -6,6 +6,19 @@ sidebar_position: 4
 
 A complete walkthrough of annotating your first dataset with CellType-Refinery.
 
+```mermaid
+flowchart LR
+    subgraph Steps["Tutorial Steps"]
+        S1["1. Prepare<br/>Data"] --> S2["2. Create<br/>Marker Map"]
+        S2 --> S3["3. Run<br/>Clustering"]
+        S3 --> S4["4. Annotate<br/>Cell Types"]
+        S4 --> S5["5. Review<br/>& Refine"]
+    end
+
+    style S1 fill:#E6E6FA
+    style S5 fill:#90EE90
+```
+
 ## Overview
 
 In this tutorial, you'll:

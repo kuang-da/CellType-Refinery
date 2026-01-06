@@ -6,6 +6,30 @@ sidebar_position: 2
 
 Get your first cell-type annotation running in 5 minutes.
 
+```mermaid
+flowchart LR
+    subgraph Input
+        A[clustered.h5ad]
+        B[markers.json]
+    end
+
+    subgraph Pipeline["Quick Pipeline"]
+        C[cluster] --> D[annotate]
+        D --> E[refine]
+        E --> F[analyze]
+    end
+
+    subgraph Output
+        G[Cell type<br/>annotations]
+    end
+
+    A --> C
+    B --> D
+    F --> G
+
+    style Pipeline fill:#E6E6FA
+```
+
 ## Prerequisites
 
 - CellType-Refinery installed ([Installation guide](installation))

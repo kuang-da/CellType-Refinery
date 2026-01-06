@@ -6,6 +6,29 @@ sidebar_position: 1
 
 CellType-Refinery can be installed from source using pip.
 
+```mermaid
+flowchart LR
+    subgraph Install["Installation Options"]
+        BASE["pip install -e ."]
+        VIZ["pip install -e .[viz]"]
+        GPU["pip install -e .[gpu]"]
+        ALL["pip install -e .[all]"]
+    end
+
+    subgraph Packages
+        B1[Core: numpy, pandas,<br/>scanpy, anndata]
+        V1[Viz: matplotlib,<br/>seaborn]
+        G1[GPU: rapids,<br/>cupy-cuda12x]
+    end
+
+    BASE --> B1
+    VIZ --> V1
+    GPU --> G1
+    ALL --> B1
+    ALL --> V1
+    ALL --> G1
+```
+
 ## Requirements
 
 - Python >= 3.10
