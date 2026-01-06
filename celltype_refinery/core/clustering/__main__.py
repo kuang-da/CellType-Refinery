@@ -138,11 +138,13 @@ class StageHRunConfig:
     de_min_k: int = 3
     de_max_k: int = 12
     anti_weight: float = 0.5
-    use_idf: bool = True
+    use_idf: bool = False  # Match ft default (opt-in via CLI flag)
     compute_umap: bool = False
     annotation_only: bool = False
     clustering_only: bool = False
     expand_markers: bool = True
+    generate_audit_cards: bool = True
+    generate_review_checklist: bool = True
 
 
 def setup_logging(
@@ -368,6 +370,7 @@ def run_stage_h(
         # Differential Expression
         logger.info(f"Running differential expression ({config.de_method})...")
         de_layer = layer if layer in adata.layers else None
+        de_key = f"de_wilcoxon_{layer}" if layer else "de_wilcoxon"
         sc.tl.rank_genes_groups(
             adata,
             groupby="cluster_lvl0",
@@ -377,9 +380,9 @@ def run_stage_h(
             use_raw=False,
             tie_correct=True,
             pts=True,
-            key_added="de_wilcoxon",
+            key_added=de_key,
         )
-        logger.info("DE testing complete")
+        logger.info(f"DE testing complete (key: {de_key})")
 
     else:
         # Annotation-only mode: verify cluster_lvl0 exists
@@ -422,13 +425,16 @@ def run_stage_h(
 
     annotation_start = time.time()
 
+    # Determine DE key (with layer suffix to match ft convention)
+    de_key = f"de_wilcoxon_{layer}" if layer else "de_wilcoxon"
+
     # Setup annotation parameters
     annotation_params = AnnotationParams(
         cluster_key="cluster_lvl0",
         label_col="cell_type_auto",
         layer=layer if layer in adata.layers else "X",
         positive_quantile=config.positive_quantile,
-        de_key="de_wilcoxon",
+        de_key=de_key,
         de_bonus=config.de_bonus,
         de_top_frac=config.de_top_frac,
         de_min_k=config.de_min_k,
@@ -453,6 +459,29 @@ def run_stage_h(
 
     annotation_time = time.time() - annotation_start
     logger.info(f"Annotation phase completed in {annotation_time:.1f}s")
+
+    # Generate audit cards (enabled by default)
+    if config.generate_audit_cards and config.expand_markers:
+        from ..audit import AuditEngine, AuditConfig
+        audit_engine = AuditEngine(AuditConfig(), logger)
+        audit_result = audit_engine.execute(
+            cluster_annotations=result.cluster_annotations,
+            decision_steps=result.decision_steps,
+            marker_scores=result.marker_scores,
+            marker_evidence=result.marker_evidence,
+            output_dir=output_dir,
+        )
+        logger.info(f"Generated audit cards: {audit_result.html_path}")
+
+    # Generate review checklist (enabled by default)
+    if config.generate_review_checklist:
+        from ..checklist import ChecklistEngine, ChecklistConfig
+        checklist_engine = ChecklistEngine(ChecklistConfig(), logger)
+        checklist_result = checklist_engine.execute(
+            cluster_annotations=result.cluster_annotations,
+            output_dir=output_dir,
+        )
+        logger.info(f"Generated review checklist: {checklist_result.md_path}")
 
     # Save AnnData with annotations
     h5ad_path = output_dir / "coarse_clusters.h5ad"
