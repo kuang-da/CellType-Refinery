@@ -86,7 +86,7 @@ class AnnotationParams:
     label_col: str = "cell_type_auto"
     layer: str = "batchcorr"
     positive_quantile: float = 0.75
-    de_key: str = "de_wilcoxon"
+    de_key: str = "de_wilcoxon_batchcorr"  # Layer-suffixed to match ft convention
     de_bonus: float = 0.6
     de_top_frac: float = 0.2
     de_min_k: int = 3
@@ -94,7 +94,7 @@ class AnnotationParams:
     de_commonness_alpha: float = 0.5
     anti_weight: float = 0.8
     anti_agg: str = "top2mean"
-    use_idf: bool = True
+    use_idf: bool = False  # Match ft default
     expand_markers: bool = True
     gating_params: Optional[Dict[str, Any]] = None
 
