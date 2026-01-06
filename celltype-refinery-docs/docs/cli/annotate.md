@@ -6,6 +6,29 @@ sidebar_position: 4
 
 Run marker-based annotation.
 
+```mermaid
+flowchart LR
+    subgraph Input
+        A[clustered.h5ad]
+        B[markers.json]
+    end
+
+    subgraph Process
+        C[Load Markers] --> D[Score Clusters]
+        D --> E[Hierarchical<br/>Gating]
+    end
+
+    subgraph Output
+        F[annotated.h5ad]
+        G[marker_scores.csv]
+    end
+
+    A --> C
+    B --> C
+    E --> F
+    E --> G
+```
+
 ## Usage
 
 ```bash

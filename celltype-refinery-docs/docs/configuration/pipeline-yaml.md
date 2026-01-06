@@ -6,6 +6,37 @@ sidebar_position: 3
 
 Configuration for full pipeline runs.
 
+```mermaid
+flowchart LR
+    subgraph Config["pipeline.yaml"]
+        V[version]
+        N[name]
+        P[paths]
+        S[stages]
+    end
+
+    subgraph Paths
+        I[input]
+        O[output]
+        M[marker_map]
+    end
+
+    subgraph Stages["Stage Toggles"]
+        C[clustering<br/>enabled: true]
+        A[annotation<br/>enabled: true]
+        R[refinement<br/>enabled: true]
+    end
+
+    P --> I
+    P --> O
+    P --> M
+    S --> C
+    S --> A
+    S --> R
+
+    style Config fill:#E6E6FA
+```
+
 ## Example
 
 ```yaml

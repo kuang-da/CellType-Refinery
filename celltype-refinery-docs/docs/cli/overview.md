@@ -6,6 +6,24 @@ sidebar_position: 1
 
 Command-line interface for CellType-Refinery.
 
+```mermaid
+flowchart LR
+    subgraph CLI["celltype-refinery"]
+        A[preprocess] --> B[cluster]
+        B --> C[annotate]
+        C --> D[refine]
+        D --> E[consolidate]
+        E --> F[analyze]
+    end
+
+    subgraph Alt["Alternative"]
+        P[pipeline<br/>--config yaml]
+    end
+
+    P -.-> A
+    P -.-> F
+```
+
 ## Installation
 
 The CLI is installed with the package:

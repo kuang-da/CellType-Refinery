@@ -6,6 +6,28 @@ sidebar_position: 5
 
 Run iterative refinement.
 
+```mermaid
+flowchart TD
+    subgraph Modes["Execution Modes"]
+        M1["--auto<br/>Automatic policy"]
+        M2["--config yaml<br/>Manual policy"]
+        M3["--auto --config<br/>Hybrid"]
+    end
+
+    subgraph Execute
+        D{--execute?}
+        D -->|No| DIAG[Diagnostic<br/>Report Only]
+        D -->|Yes| RUN[Apply<br/>Refinements]
+    end
+
+    M1 --> D
+    M2 --> D
+    M3 --> D
+
+    style DIAG fill:#FFFACD
+    style RUN fill:#90EE90
+```
+
 ## Usage
 
 ```bash
