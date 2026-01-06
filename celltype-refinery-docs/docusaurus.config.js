@@ -7,10 +7,11 @@ const config = {
   tagline: 'Cell-type annotation for spatial proteomics',
   favicon: 'img/favicon.ico',
 
-  url: 'https://kimpenn.github.io',
+  url: 'https://kuang-da.github.io',
   baseUrl: '/CellType-Refinery/',
+  trailingSlash: false,
 
-  organizationName: 'kimpenn',
+  organizationName: 'kuang-da',
   projectName: 'CellType-Refinery',
 
   onBrokenLinks: 'throw',
@@ -28,7 +29,7 @@ const config = {
       ({
         docs: {
           sidebarPath: './sidebars.js',
-          editUrl: 'https://github.com/kimpenn/CellType-Refinery/tree/main/celltype-refinery-docs/',
+          editUrl: 'https://github.com/kuang-da/CellType-Refinery/tree/main/celltype-refinery-docs/',
         },
         blog: false,
         theme: {
@@ -62,7 +63,7 @@ const config = {
             label: 'Documentation',
           },
           {
-            href: 'https://github.com/kimpenn/CellType-Refinery',
+            href: 'https://github.com/kuang-da/CellType-Refinery',
             label: 'GitHub',
             position: 'right',
           },
@@ -82,8 +83,8 @@ const config = {
           {
             title: 'More',
             items: [
-              { label: 'GitHub', href: 'https://github.com/kimpenn/CellType-Refinery' },
-              { label: 'Issues', href: 'https://github.com/kimpenn/CellType-Refinery/issues' },
+              { label: 'GitHub', href: 'https://github.com/kuang-da/CellType-Refinery' },
+              { label: 'Issues', href: 'https://github.com/kuang-da/CellType-Refinery/issues' },
             ],
           },
         ],
