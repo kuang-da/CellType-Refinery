@@ -18,6 +18,18 @@ const sidebars = {
     },
     {
       type: 'category',
+      label: 'Methodology',
+      items: [
+        'methodology/index',
+        'methodology/annotation-pipeline',
+        'methodology/marker-scoring-algorithm',
+        'methodology/hierarchical-gating-algorithm',
+        'methodology/refinement-decision-logic',
+        'methodology/tuning-guide',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Core Workflows',
       items: [
         'core-workflows/workflow-overview',
@@ -138,6 +150,14 @@ const sidebars = {
         'configuration/tissue-templates',
         'configuration/pipeline-yaml',
         'configuration/refinement-yaml',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Reference',
+      items: [
+        'reference/glossary',
+        'reference/output-files',
       ],
     },
     {
