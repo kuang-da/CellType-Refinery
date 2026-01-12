@@ -6,7 +6,7 @@ This plan improves documentation for Stages H (Clustering & Initial Annotation) 
 
 **Key Revisions Based on Review:**
 - Restructured phases to follow user journey (not algorithm-first)
-- Added getting-started enhancements and troubleshooting sections
+- Added getting-started enhancements
 - Added API reference for developers
 - Added explicit cross-references between sections
 - Reduced redundancy through link-heavy approach
@@ -17,7 +17,7 @@ This plan improves documentation for Stages H (Clustering & Initial Annotation) 
 
 1. **Make the annotation methodology clear and accessible** - Users understand HOW cell types are assigned
 2. **Enable parameter tuning** - Document scoring formulas and gating thresholds with tuning guidance
-3. **Support the user journey** - From "what is this?" to "how do I debug this?"
+3. **Support the user journey** - From "what is this?" to "how do I tune this?"
 4. **Serve developers** - API reference, source code links, extension guides
 5. **Integrate rich technical content** - Bring stage_h.md ASCII charts and Stage I docs into user docs
 
@@ -69,7 +69,6 @@ const sidebars = {
       label: 'Reference',                      // NEW SECTION
       items: [
         'reference/glossary',                  // Term definitions
-        'reference/troubleshooting',           // When things go wrong
         'reference/faq',                       // Common questions
         'reference/parameter-reference',       // All parameters in one place
         'reference/output-files',              // CSV/H5AD schema reference
@@ -111,7 +110,7 @@ const sidebars = {
 ### Path 1: New User (Wants to Run)
 ```
 intro → getting-started/quickstart → core-workflows/automated-workflow
-→ reference/troubleshooting (if issues) → examples/fallopian-tube
+→ examples/fallopian-tube
 ```
 
 ### Path 2: Researcher (Wants to Understand the Algorithm)
@@ -121,13 +120,7 @@ intro → methodology/index → methodology/annotation-pipeline
 → methodology/tuning-guide (for customization)
 ```
 
-### Path 3: User with Problems (Debugging)
-```
-reference/troubleshooting → reference/glossary → reference/faq
-→ methodology/tuning-guide → specific module docs
-```
-
-### Path 4: Developer (Extending the System)
+### Path 3: Developer (Extending the System)
 ```
 intro → methodology/ (understand algorithms) → api/overview
 → api/annotation-engine → modules/ (implementation details)
@@ -158,12 +151,11 @@ Document the cell type annotation algorithm - the key contribution.
 | `methodology/refinement-decision-logic.md` | 300 | 4 criteria for subcluster vs relabel |
 
 ### Phase 3: Practical Support (Priority: High)
-Help users solve problems and tune parameters.
+Help users tune parameters and understand common scenarios.
 
 | File | Lines | Description |
 |------|-------|-------------|
 | `methodology/tuning-guide.md` | 350 | Parameter adjustment by scenario |
-| `reference/troubleshooting.md` | 400 | Decision tree for common issues |
 | `reference/faq.md` | 250 | Common questions answered |
 
 ### Phase 4: Enhanced Module Docs (Priority: Medium)
@@ -464,48 +456,6 @@ score = mean_enrichment + mean_positive + de_component - anti_penalty
 
 ---
 
-### `reference/troubleshooting.md` - When Things Go Wrong
-
-**Content Outline**:
-
-1. **Too Many "Unassigned" Clusters**
-   - Check: Marker panel coverage (do you have markers for all cell types?)
-   - Check: Root requirements (are they too strict?)
-   - Fix: Lower `min_coverage` (0.5 → 0.3)
-   - Fix: Lower `min_pos_frac` (0.3 → 0.15)
-   - Fix: Review `root_hard_requirements` in marker map
-
-2. **Annotation Stops Too Early (Parent-Level Only)**
-   - Check: Child marker definitions (are children well-defined?)
-   - Check: min_gap thresholds (are they too strict?)
-   - Fix: Lower `min_gap` at level 1+ (0.3 → 0.2)
-   - Fix: Add more specific markers for child types
-
-3. **Wrong Cell Types Assigned**
-   - Check: Anti-markers (are they defined for conflicting types?)
-   - Check: Root veto markers (should block incorrect roots)
-   - Fix: Add anti-markers to marker map
-   - Fix: Increase `anti_weight` (0.5 → 0.8)
-   - Fix: Add `root_hard_requirements` for key markers
-
-4. **Refinement Too Aggressive (Too Much Subclustering)**
-   - Check: `score_threshold` (is it too high?)
-   - Check: `min_cells` (should filter small clusters)
-   - Fix: Raise `score_threshold` (1.0 → 1.5)
-   - Fix: Raise `min_cells` (500 → 1000)
-
-5. **Results Inconsistent Between Runs**
-   - Cause: GPU non-determinism in Leiden clustering
-   - Fix: Use `--no-gpu` for reproducibility
-   - Alternative: Run clustering once, then use annotation-only mode for iterations
-
-6. **High Confidence but Biologically Wrong**
-   - Issue: Markers may not be specific for your tissue
-   - Fix: Review marker map for tissue appropriateness
-   - Fix: Add tissue-specific `gating_params` section to marker map
-
----
-
 ### `reference/glossary.md` - Terminology
 
 Key terms to define:
@@ -583,8 +533,7 @@ After implementation, users should be able to:
 2. **Understand Methodology**: Read methodology/ section and understand HOW annotation works
 3. **Tune Parameters**: Know which parameters affect what behavior and adjust confidently
 4. **Interpret Results**: Understand stop_reason, confidence, and decision_steps
-5. **Debug Issues**: Use troubleshooting guide to fix common problems
-6. **Developer**: Find API reference, understand data structures, extend the system
+5. **Developer**: Find API reference, understand data structures, extend the system
 
 ---
 
@@ -594,10 +543,10 @@ After implementation, users should be able to:
 |-------|-------------|------------------|-------------|
 | Phase 1 | 650 lines | 0 | ~650 |
 | Phase 2 | 1,350 lines | 0 | ~1,350 |
-| Phase 3 | 1,000 lines | 0 | ~1,000 |
+| Phase 3 | 600 lines | 0 | ~600 |
 | Phase 4 | 850 lines | 600 | ~1,450 |
 | Phase 5 | 1,000 lines | 0 | ~1,000 |
-| **Total** | **4,850 lines** | **600 lines** | **~5,450 lines** |
+| **Total** | **4,450 lines** | **600 lines** | **~5,050 lines** |
 
 ---
 
