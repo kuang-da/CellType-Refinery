@@ -48,7 +48,7 @@ import json
 import logging
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Sequence
 
@@ -121,6 +121,8 @@ class StageHRunConfig:
         Skip annotation, only cluster
     expand_markers : bool
         Output per-marker evidence table
+    technical_markers : List[str]
+        Technical markers to exclude from clustering (moved to obs columns)
     """
 
     layer: str = "batchcorr"
@@ -145,6 +147,7 @@ class StageHRunConfig:
     expand_markers: bool = True
     generate_audit_cards: bool = True
     generate_review_checklist: bool = True
+    technical_markers: List[str] = field(default_factory=lambda: ["DAPI", "Collagen IV", "Beta-actin"])
 
 
 def setup_logging(
@@ -172,6 +175,7 @@ def setup_logging(
     logger = logging.getLogger("stage_h")
     logger.setLevel(level)
     logger.handlers.clear()
+    logger.propagate = False  # Prevent duplicate logs to root logger
 
     formatter = logging.Formatter(
         "%(asctime)s [%(levelname)s] %(message)s",
@@ -312,6 +316,28 @@ def run_stage_h(
         logger.info("=" * 60)
         logger.info("CLUSTERING PHASE")
         logger.info("=" * 60)
+
+        # Exclude technical markers (move to obs, don't use for clustering)
+        if config.technical_markers:
+            excluded = []
+            for marker in config.technical_markers:
+                if marker in adata.var_names:
+                    marker_idx = list(adata.var_names).index(marker)
+                    # Handle both dense and sparse matrices
+                    if hasattr(adata.X, 'toarray'):
+                        values = adata.X[:, marker_idx].toarray().flatten()
+                    else:
+                        values = np.asarray(adata.X[:, marker_idx]).flatten()
+                    col_name = f"{marker}_intensity"
+                    adata.obs[col_name] = values
+                    excluded.append(marker)
+                    logger.info(f"Moved '{marker}' to obs column '{col_name}' (mean={values.mean():.2f}, std={values.std():.2f})")
+
+            if excluded:
+                keep_markers = [m for m in adata.var_names if m not in excluded]
+                adata = adata[:, keep_markers].copy()
+                logger.info(f"Excluded {len(excluded)} technical markers from features: {excluded}")
+                logger.info(f"Feature matrix: {adata.n_vars} markers remaining")
 
         # Filter low variance markers
         logger.info("Filtering low variance markers...")
@@ -733,6 +759,16 @@ for reproducible marker map iterations.
         help="Weight for anti-marker penalty (default: 0.5)",
     )
 
+    # Technical marker exclusion
+    parser.add_argument(
+        "--technical-markers",
+        type=str,
+        nargs="+",
+        default=["DAPI", "Collagen IV", "Beta-actin"],
+        help="Technical markers to exclude from clustering (moved to obs). "
+             "Default: DAPI, 'Collagen IV', Beta-actin. Use --technical-markers '' to disable.",
+    )
+
     # Output options
     parser.add_argument(
         "--verbose", "-v",
@@ -770,6 +806,11 @@ def main(argv: Optional[Sequence[str]] = None):
         sys.exit(1)
 
     # Build config
+    # Handle technical_markers: empty string disables exclusion
+    tech_markers = args.technical_markers
+    if tech_markers == [""] or tech_markers == []:
+        tech_markers = []
+
     config = StageHRunConfig(
         layer=args.layer,
         n_pcs=args.n_pcs,
@@ -782,6 +823,7 @@ def main(argv: Optional[Sequence[str]] = None):
         clustering_only=args.clustering_only,
         de_bonus=args.de_bonus,
         anti_weight=args.anti_weight,
+        technical_markers=tech_markers,
     )
 
     try:

@@ -3225,6 +3225,7 @@ def build_anndata(
     corrected_tables: List[Optional[pd.DataFrame]],
     marker_cols: List[str],
     config: MergeConfig,
+    logger: Optional[logging.Logger] = None,
 ) -> "anndata.AnnData":
     """Build AnnData object from merged sample data.
 
@@ -3240,6 +3241,8 @@ def build_anndata(
         Marker column names
     config : MergeConfig
         Merge configuration
+    logger : logging.Logger, optional
+        Logger for progress messages
 
     Returns
     -------
@@ -3251,9 +3254,15 @@ def build_anndata(
     except ImportError as exc:
         raise RuntimeError("anndata is required for Stage F. Install with: pip install anndata") from exc
 
+    def _log(msg: str) -> None:
+        if logger:
+            logger.info(msg)
+
     # Concatenate all samples
+    _log(f"  [1/4] Concatenating {len(merged_tables)} aligned tables...")
     merged_df = pd.concat(merged_tables, ignore_index=True)
     expression = merged_df[marker_cols].to_numpy(dtype=np.float32)
+    _log(f"  [1/4] Done: {expression.shape[0]:,} cells x {expression.shape[1]} markers")
 
     # Build obs DataFrame
     obs_cols = [config.cell_id_col, "sample_id", "donor", "region", "exp_id"]
@@ -3270,6 +3279,7 @@ def build_anndata(
     adata.layers["aligned"] = expression.copy()
 
     # Add raw layer (Stage C normalized but not aligned)
+    _log("  [2/4] Building 'raw' layer (concat + reindex)...")
     if any(tbl is not None for tbl in raw_tables):
         raw_dfs = []
         for tbl in raw_tables:
@@ -3283,8 +3293,10 @@ def build_anndata(
             # Reindex to match adata ordering
             raw_matrix = raw_concat.reindex(adata.obs[config.cell_id_col]).loc[:, marker_cols].to_numpy(dtype=np.float32)
             adata.layers["raw"] = raw_matrix
+    _log("  [2/4] 'raw' layer added")
 
     # Add batch-corrected layer (Stage E)
+    _log("  [3/4] Building 'batchcorr' layer (concat + reindex)...")
     if any(tbl is not None for tbl in corrected_tables):
         corr_dfs = []
         for tbl in corrected_tables:
@@ -3297,8 +3309,10 @@ def build_anndata(
             corr_concat = corr_concat.set_index("_idx")
             corr_matrix = corr_concat.reindex(adata.obs[config.cell_id_col]).loc[:, marker_cols].to_numpy(dtype=np.float32)
             adata.layers["batchcorr"] = corr_matrix
+    _log("  [3/4] 'batchcorr' layer added")
 
     # Add spatial coordinates to obsm
+    _log("  [4/4] Adding spatial coordinates...")
     if {config.x_col, config.y_col}.issubset(adata.obs.columns):
         adata.obsm["spatial"] = adata.obs[[config.x_col, config.y_col]].to_numpy(dtype=np.float32)
 
@@ -3584,6 +3598,7 @@ def run_stage_f(
         corrected_tables=corrected_tables,
         marker_cols=marker_cols,
         config=config,
+        logger=logger,
     )
     logger.info(f"AnnData: {adata.n_obs} cells, {adata.n_vars} markers")
     logger.info(f"Layers: {list(adata.layers.keys())}")
