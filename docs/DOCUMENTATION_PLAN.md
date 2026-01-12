@@ -155,7 +155,7 @@ Help users tune parameters and understand common scenarios.
 
 | File | Lines | Description |
 |------|-------|-------------|
-| `methodology/tuning-guide.md` | 350 | Parameter adjustment by scenario |
+| `methodology/tuning-guide.md` | 500 | Parameter adjustment by scenario (expanded with practical tips) |
 | `reference/faq.md` | 250 | Common questions answered |
 
 ### Phase 4: Enhanced Module Docs (Priority: Medium)
@@ -456,6 +456,64 @@ score = mean_enrichment + mean_positive + de_component - anti_penalty
 
 ---
 
+### `methodology/tuning-guide.md` - Practical Parameter Tuning
+
+**Purpose**: Help users adjust parameters for their specific data and tissue types. This is expected - almost every dataset requires some tuning.
+
+**Content Outline**:
+
+1. **Too Many "Unassigned" Clusters**
+   - Check: Marker panel coverage (do you have markers for all cell types?)
+   - Check: Root requirements (are they too strict?)
+   - Fix: Lower `min_coverage` (0.5 → 0.3)
+   - Fix: Lower `min_pos_frac` (0.3 → 0.15)
+   - Fix: Review `root_hard_requirements` in marker map
+
+2. **Annotation Stops Too Early (Parent-Level Only)**
+   - Check: Child marker definitions (are children well-defined?)
+   - Check: min_gap thresholds (are they too strict?)
+   - Fix: Lower `min_gap` at level 1+ (0.3 → 0.2)
+   - Fix: Add more specific markers for child types
+
+3. **Wrong Cell Types Assigned**
+   - Check: Anti-markers (are they defined for conflicting types?)
+   - Check: Root veto markers (should block incorrect roots)
+   - Fix: Add anti-markers to marker map
+   - Fix: Increase `anti_weight` (0.5 → 0.8)
+   - Fix: Add `root_hard_requirements` for key markers
+
+4. **Refinement Too Aggressive (Too Much Subclustering)**
+   - Check: `score_threshold` (is it too high?)
+   - Check: `min_cells` (should filter small clusters)
+   - Fix: Raise `score_threshold` (1.0 → 1.5)
+   - Fix: Raise `min_cells` (500 → 1000)
+
+5. **Results Inconsistent Between Runs**
+   - Cause: GPU non-determinism in Leiden clustering
+   - Fix: Use `--no-gpu` for reproducibility
+   - Alternative: Run clustering once, then use annotation-only mode for iterations
+
+6. **High Confidence but Biologically Wrong**
+   - Issue: Markers may not be specific for your tissue
+   - Fix: Review marker map for tissue appropriateness
+   - Fix: Add tissue-specific `gating_params` section to marker map
+
+7. **Parameter Reference Quick Table**
+   - All tunable parameters organized by category
+   - Default values, valid ranges, and when to adjust
+
+8. **Tissue-Specific Configuration**
+   - How to create custom `_gating_params` in marker map JSON
+   - Example: Fallopian tube defaults explained
+   - Template for new tissues
+
+**Cross-references**:
+- → `methodology/marker-scoring-algorithm.md` for formula details
+- → `methodology/hierarchical-gating-algorithm.md` for gating thresholds
+- → `reference/parameter-reference.md` for complete parameter list
+
+---
+
 ### `reference/glossary.md` - Terminology
 
 Key terms to define:
@@ -543,10 +601,10 @@ After implementation, users should be able to:
 |-------|-------------|------------------|-------------|
 | Phase 1 | 650 lines | 0 | ~650 |
 | Phase 2 | 1,350 lines | 0 | ~1,350 |
-| Phase 3 | 600 lines | 0 | ~600 |
+| Phase 3 | 750 lines | 0 | ~750 |
 | Phase 4 | 850 lines | 600 | ~1,450 |
 | Phase 5 | 1,000 lines | 0 | ~1,000 |
-| **Total** | **4,450 lines** | **600 lines** | **~5,050 lines** |
+| **Total** | **4,600 lines** | **600 lines** | **~5,200 lines** |
 
 ---
 
