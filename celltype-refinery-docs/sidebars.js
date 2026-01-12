@@ -18,6 +18,18 @@ const sidebars = {
     },
     {
       type: 'category',
+      label: 'Methodology',
+      items: [
+        'methodology/index',
+        'methodology/annotation-pipeline',
+        'methodology/marker-scoring-algorithm',
+        'methodology/hierarchical-gating-algorithm',
+        'methodology/refinement-decision-logic',
+        'methodology/tuning-guide',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Core Workflows',
       items: [
         'core-workflows/workflow-overview',
@@ -61,6 +73,7 @@ const sidebars = {
             'modules/annotation/marker-maps',
             'modules/annotation/hierarchical-gating',
             'modules/annotation/marker-scoring',
+            'modules/annotation/per-cell-voting',
             'modules/annotation/exports',
           ],
         },
@@ -73,6 +86,8 @@ const sidebars = {
             'modules/refinement/operations',
             'modules/refinement/diagnostic-mode',
             'modules/refinement/execution-mode',
+            'modules/refinement/focus-controls',
+            'modules/refinement/iterative-refinement',
           ],
         },
         {
@@ -138,6 +153,14 @@ const sidebars = {
         'configuration/tissue-templates',
         'configuration/pipeline-yaml',
         'configuration/refinement-yaml',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Reference',
+      items: [
+        'reference/glossary',
+        'reference/output-files',
       ],
     },
     {
