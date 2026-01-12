@@ -37,6 +37,10 @@ CATEGORY_COLORS = {
     "Misc": "#95a5a6",                # Gray
 }
 
+STATE_COLORS = {
+    "default": "#16a085",             # Teal for cell states
+}
+
 
 # ============================================================================
 # Data Structures
@@ -54,6 +58,15 @@ class MarkerNode:
     gating_overrides: Optional[Dict[str, Any]] = None
     parent: Optional[str] = None
     children: List[str] = field(default_factory=list)
+
+
+@dataclass
+class StateNode:
+    """Representation of a cell state definition from _cell_state_markers."""
+    name: str
+    markers: List[str] = field(default_factory=list)
+    description: Optional[str] = None
+    applies_to: Optional[str] = None
 
 
 # ============================================================================
@@ -161,6 +174,37 @@ def parse_marker_hierarchy(
     return nodes, node_lookup
 
 
+def parse_cell_states(marker_map: Dict[str, Any]) -> List[StateNode]:
+    """
+    Parse _cell_state_markers section into list of StateNode objects.
+
+    Parameters
+    ----------
+    marker_map : Dict[str, Any]
+        Full marker map dictionary containing _cell_state_markers.
+
+    Returns
+    -------
+    List[StateNode]
+        List of state definitions.
+    """
+    states: List[StateNode] = []
+    csm = marker_map.get("_cell_state_markers", {})
+    states_dict = csm.get("states", {})
+
+    for name, data in states_dict.items():
+        if not isinstance(data, dict):
+            continue
+        states.append(StateNode(
+            name=name,
+            markers=data.get("markers", []) if isinstance(data.get("markers"), list) else [],
+            description=data.get("description"),
+            applies_to=data.get("applies_to"),
+        ))
+
+    return states
+
+
 def format_marker_list(
     markers: List[str],
     max_display: int = 5,
@@ -202,8 +246,10 @@ __all__ = [
     # Constants
     "MARKER_COLORS",
     "CATEGORY_COLORS",
+    "STATE_COLORS",
     # Data structures
     "MarkerNode",
+    "StateNode",
     # Style functions
     "set_plot_style",
     "ensure_parent",
@@ -211,6 +257,7 @@ __all__ = [
     # Parsing utilities
     "skip_metadata_keys",
     "parse_marker_hierarchy",
+    "parse_cell_states",
     "format_marker_list",
     "get_category_color",
     # Types
