@@ -73,6 +73,7 @@ const sidebars = {
             'modules/annotation/marker-maps',
             'modules/annotation/hierarchical-gating',
             'modules/annotation/marker-scoring',
+            'modules/annotation/per-cell-voting',
             'modules/annotation/exports',
           ],
         },
@@ -85,6 +86,8 @@ const sidebars = {
             'modules/refinement/operations',
             'modules/refinement/diagnostic-mode',
             'modules/refinement/execution-mode',
+            'modules/refinement/focus-controls',
+            'modules/refinement/iterative-refinement',
           ],
         },
         {
