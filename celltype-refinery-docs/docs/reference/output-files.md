@@ -237,4 +237,4 @@ Some CSV columns contain JSON-encoded data:
 
 - [Annotation Pipeline](../methodology/annotation-pipeline.md) - Pipeline overview
 - [CLI Reference](../cli/overview.md) - Command options
-- [Marker Map Schema](./marker-map-schema.md) - Input marker map format
+- [Marker Maps Configuration](../configuration/marker-maps.md) - Input marker map format

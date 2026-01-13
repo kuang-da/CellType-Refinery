@@ -98,5 +98,5 @@ celltype-refinery annotate score \
 
 - [Marker Scoring Algorithm](/docs/methodology/marker-scoring-algorithm.md) - Complete mathematical formulation
 - [Hierarchical Gating](./hierarchical-gating.md) - How scores drive hierarchy traversal
-- [Tuning Guide](/docs/guides/tuning-guide.md) - Parameter adjustment strategies
-- [Marker Definition](/docs/reference/marker-definition.md) - Marker file format specification
+- [Tuning Guide](/docs/methodology/tuning-guide.md) - Parameter adjustment strategies
+- [Marker Maps Configuration](/docs/configuration/marker-maps.md) - Marker file format specification

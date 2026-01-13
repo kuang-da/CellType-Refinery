@@ -1007,5 +1007,5 @@ ctr annotate ... \
 
 - [Marker Scoring Algorithm](./marker-scoring-algorithm.md) - Understand scoring components
 - [Hierarchical Gating Algorithm](./hierarchical-gating-algorithm.md) - Understand gating thresholds
-- [Refinement Algorithm](./refinement-algorithm.md) - Understand heterogeneity detection
-- [Pipeline Overview](./pipeline-overview.md) - End-to-end workflow understanding
+- [Refinement Decision Logic](./refinement-decision-logic.md) - Understand heterogeneity detection
+- [Annotation Pipeline](./annotation-pipeline.md) - End-to-end workflow understanding

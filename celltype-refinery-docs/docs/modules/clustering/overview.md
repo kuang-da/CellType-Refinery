@@ -174,7 +174,7 @@ celltype-refinery cluster \
 
 ## See Also
 
-- [Parameters Reference](./parameters.md) - Complete parameter documentation
-- [Tuning Guide](./tuning-guide.md) - Best practices for parameter tuning
+- [Leiden Clustering](./leiden-clustering.md) - Detailed Leiden algorithm documentation
+- [Differential Expression](./differential-expression.md) - DE analysis methods
+- [Tuning Guide](/docs/methodology/tuning-guide.md) - Best practices for parameter tuning
 - [Annotation Pipeline](/docs/methodology/annotation-pipeline.md) - Full pipeline overview
-- [Marker Interpretation](/docs/reference/marker-interpretation.md) - Understanding marker expression
