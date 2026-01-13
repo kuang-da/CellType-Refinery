@@ -185,7 +185,7 @@ The AutoPolicy uses a rules-based system to determine which operations to recomm
 | Confidence | < 0.3 | 0.3 - 0.7 | > 0.7 |
 | Delta | < 0.1 | 0.1 - 0.3 | > 0.3 |
 
-For detailed decision trees and threshold tuning, see the [AutoPolicy Thresholds](/docs/modules/refinement/auto-policy-thresholds.md) documentation.
+For detailed decision trees and threshold tuning, see the [Tuning Guide](/docs/methodology/tuning-guide.md) and [Refinement Decision Logic](/docs/methodology/refinement-decision-logic.md) documentation.
 
 ## CLI Examples
 
@@ -244,8 +244,7 @@ celltype-refinery refine input.h5ad --auto --dry-run
 ## See Also
 
 - [Refinement Decision Logic](/docs/methodology/refinement-decision-logic.md) - Detailed explanation of the decision framework
-- [AutoPolicy Thresholds](/docs/modules/refinement/auto-policy-thresholds.md) - Configuring automatic refinement thresholds
-- [Manual Configuration](/docs/modules/refinement/manual-config.md) - YAML configuration file format and options
-- [Tuning Guide](/docs/guides/tuning-guide.md) - Practical tips for optimizing refinement parameters
-- [Scoring Module](/docs/modules/scoring/overview.md) - Understanding the scores used in refinement decisions
-- [API Reference](/docs/reference/api-reference.md) - Programmatic access to refinement functions
+- [Policies](./policies.md) - Policy types and configuration options
+- [Operations](./operations.md) - Available refinement operations
+- [Tuning Guide](/docs/methodology/tuning-guide.md) - Practical tips for optimizing refinement parameters
+- [Marker Scoring](/docs/modules/annotation/marker-scoring.md) - Understanding the scores used in refinement decisions

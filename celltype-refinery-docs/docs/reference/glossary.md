@@ -370,6 +370,6 @@ A statistical measure indicating how many standard deviations a value is from th
 
 ## See Also
 
-- [Scoring System](../how-it-works/scoring.md) - Detailed explanation of how scores are calculated
-- [Hierarchical Descent](../how-it-works/hierarchical-descent.md) - How the algorithm traverses the marker map
-- [Configuration Reference](./configuration.md) - Parameter definitions and defaults
+- [Marker Scoring Algorithm](../methodology/marker-scoring-algorithm.md) - Detailed explanation of how scores are calculated
+- [Hierarchical Gating Algorithm](../methodology/hierarchical-gating-algorithm.md) - How the algorithm traverses the marker map
+- [Output Files](./output-files.md) - Output file format specifications

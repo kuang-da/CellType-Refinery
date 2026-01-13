@@ -97,5 +97,5 @@ celltype-refinery annotate gate \
 
 - [Hierarchical Gating Algorithm](/docs/methodology/hierarchical-gating-algorithm.md) - Complete pseudocode and gate checks
 - [Marker Scoring](./marker-scoring.md) - How scores are calculated
-- [Tuning Guide](/docs/guides/tuning-guide.md) - Threshold adjustment strategies
-- [Marker Definition](/docs/reference/marker-definition.md) - Hierarchy structure specification
+- [Tuning Guide](/docs/methodology/tuning-guide.md) - Threshold adjustment strategies
+- [Marker Maps Configuration](/docs/configuration/marker-maps.md) - Hierarchy structure specification

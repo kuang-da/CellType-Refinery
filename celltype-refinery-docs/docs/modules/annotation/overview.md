@@ -175,5 +175,5 @@ celltype-refinery annotate \
 - [Hierarchical Gating Algorithm](/docs/methodology/hierarchical-gating-algorithm.md) - Formal algorithm specification
 
 ### Related Guides
-- [Tuning Guide](/docs/guides/tuning-guide.md) - Parameter optimization strategies
-- [Marker Map Format](/docs/reference/marker-map-format.md) - JSON schema and examples
+- [Tuning Guide](/docs/methodology/tuning-guide.md) - Parameter optimization strategies
+- [Marker Maps Configuration](/docs/configuration/marker-maps.md) - JSON schema and examples
