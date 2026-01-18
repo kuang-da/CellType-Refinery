@@ -210,6 +210,27 @@ class CompositionEngine:
             min_cells=config.diversity.min_cells_per_sample,
         )
 
+        # Add region and donor columns to diversity_by_sample
+        # Create sample-level metadata lookup
+        sample_metadata_cols = [sample_col]
+        if region_col in adata.obs.columns:
+            sample_metadata_cols.append(region_col)
+        if donor_col in adata.obs.columns:
+            sample_metadata_cols.append(donor_col)
+
+        if len(sample_metadata_cols) > 1:
+            sample_metadata = (
+                adata.obs[sample_metadata_cols]
+                .drop_duplicates()
+                .set_index(sample_col)
+            )
+            diversity_by_sample = diversity_by_sample.merge(
+                sample_metadata,
+                left_on=sample_col,
+                right_index=True,
+                how="left",
+            )
+
         diversity_summary = compute_diversity_summary(diversity_by_sample)
 
         # Biology metrics (optional)

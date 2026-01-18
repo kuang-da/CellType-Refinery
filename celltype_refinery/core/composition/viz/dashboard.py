@@ -85,6 +85,7 @@ def _get_region_colors(regions: List[str], config_colors: Optional[Dict[str, str
 def generate_composition_dashboard(
     output_dir: Union[str, Path],
     output_path: Optional[Union[str, Path]] = None,
+    html_dir: Optional[Union[str, Path]] = None,
     title: str = "Cell-Type Composition Analysis",
     region_order: Optional[List[str]] = None,
     region_colors: Optional[Dict[str, str]] = None,
@@ -101,6 +102,13 @@ def generate_composition_dashboard(
         Directory containing composition output CSVs
     output_path : Path, optional
         Path to save HTML. If None, saves to output_dir/dashboard.html
+        Ignored if html_dir is specified.
+    html_dir : Path, optional
+        Output directory for HTML dashboards (flat structure).
+        If specified, all HTML files are written to this directory:
+        - Multi-column: index.html + <column>.html files
+        - Single-column: dashboard.html
+        This makes the HTML output easy to share.
     title : str
         Dashboard title
     region_order : List[str], optional
@@ -121,9 +129,19 @@ def generate_composition_dashboard(
         return None
 
     output_dir = Path(output_dir)
-    if output_path is None:
+
+    # Handle html_dir for flat output structure
+    if html_dir is not None:
+        html_dir = Path(html_dir)
+        html_dir.mkdir(parents=True, exist_ok=True)
+
+    # Determine output path
+    if html_dir is not None:
+        output_path = html_dir / "dashboard.html"
+    elif output_path is None:
         output_path = output_dir / "dashboard.html"
-    output_path = Path(output_path)
+    else:
+        output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Check for multi-column mode
@@ -131,7 +149,7 @@ def generate_composition_dashboard(
     if multi_summary_path.exists():
         logger.info("Detected multi-column mode, generating dashboards for each column")
         return _generate_multi_column_dashboard(
-            output_dir, output_path, title, region_order, region_colors
+            output_dir, output_path, html_dir, title, region_order, region_colors
         )
 
     # Single-column mode
@@ -183,6 +201,7 @@ def generate_composition_dashboard(
 def _generate_multi_column_dashboard(
     output_dir: Path,
     output_path: Path,
+    html_dir: Optional[Path],
     title: str,
     region_order: Optional[List[str]] = None,
     region_colors: Optional[Dict[str, str]] = None,
@@ -190,7 +209,7 @@ def _generate_multi_column_dashboard(
     """Generate dashboards for multi-column mode.
 
     Creates:
-    - Individual dashboard for each column in subdirectories
+    - Individual dashboard for each column in subdirectories (or flat in html_dir)
     - Index dashboard at root with comparison and links
 
     Parameters
@@ -199,6 +218,10 @@ def _generate_multi_column_dashboard(
         Root output directory containing column subdirectories
     output_path : Path
         Path for index dashboard
+    html_dir : Path, optional
+        If provided, write all HTML files to this directory (flat structure):
+        - index.html for the comparison dashboard
+        - <column>.html for each individual dashboard
     title : str
         Dashboard title
     region_order : List[str], optional
@@ -224,12 +247,20 @@ def _generate_multi_column_dashboard(
         logger.error("No columns processed in multi-column summary")
         return None
 
+    # Determine if using flat output structure
+    flat_output = html_dir is not None
+
     # Generate individual dashboards for each column
     column_dashboards = {}
     for col in columns_processed:
         col_dir = output_dir / col
         if col_dir.exists():
-            col_dashboard_path = col_dir / "dashboard.html"
+            # Determine output path for this column's dashboard
+            if flat_output:
+                col_dashboard_path = html_dir / f"{col}.html"
+            else:
+                col_dashboard_path = col_dir / "dashboard.html"
+
             col_title = f"{title} - {col}"
 
             # Load column data and generate dashboard
@@ -255,18 +286,24 @@ def _generate_multi_column_dashboard(
                 column_dashboards[col] = col_dashboard_path
                 logger.info(f"Generated dashboard for {col}")
 
+    # Determine index dashboard output path
+    if flat_output:
+        index_path = html_dir / "index.html"
+    else:
+        index_path = output_path
+
     # Generate index dashboard with comparison
     html_parts = []
     html_parts.append(_build_multi_column_header(title, multi_summary))
     html_parts.append(_build_multi_column_comparison(comparison, columns_processed))
-    html_parts.append(_build_multi_column_links(columns_processed, column_dashboards))
+    html_parts.append(_build_multi_column_links(columns_processed, column_dashboards, flat_output))
     html_parts.append(_build_multi_column_footer(multi_summary))
 
     html_content = "\n".join(html_parts)
-    output_path.write_text(html_content)
+    index_path.write_text(html_content)
 
-    logger.info(f"Saved multi-column index dashboard to {output_path}")
-    return output_path
+    logger.info(f"Saved multi-column index dashboard to {index_path}")
+    return index_path
 
 
 def _build_multi_column_header(title: str, multi_summary: Dict) -> str:
@@ -280,7 +317,6 @@ def _build_multi_column_header(title: str, multi_summary: Dict) -> str:
 <html>
 <head>
     <title>{title}</title>
-    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
     <style>
         * {{
             box-sizing: border-box;
@@ -430,7 +466,7 @@ def _build_multi_column_comparison(comparison: Dict, columns: list) -> str:
         yaxis=dict(title="Number of Cell Types", automargin=True),
         plot_bgcolor="white",
     )
-    bar_html = bar_fig.to_html(full_html=False, include_plotlyjs=False, config={'responsive': True})
+    bar_html = bar_fig.to_html(full_html=False, include_plotlyjs=True, config={'responsive': True})
 
     # Build diversity comparison
     diversity_fig = go.Figure()
@@ -476,15 +512,29 @@ def _build_multi_column_comparison(comparison: Dict, columns: list) -> str:
 """
 
 
-def _build_multi_column_links(columns: list, dashboards: Dict) -> str:
-    """Build links to individual column dashboards."""
+def _build_multi_column_links(columns: list, dashboards: Dict, flat_output: bool = False) -> str:
+    """Build links to individual column dashboards.
+
+    Parameters
+    ----------
+    columns : list
+        List of column names
+    dashboards : Dict
+        Mapping of column names to dashboard paths
+    flat_output : bool
+        If True, use flat paths (e.g., cell_type_broad.html)
+        If False, use nested paths (e.g., cell_type_broad/dashboard.html)
+    """
     links_html = []
 
     for col in columns:
         dashboard_path = dashboards.get(col)
         if dashboard_path:
-            # Use relative path
-            rel_path = f"{col}/dashboard.html"
+            # Use relative path based on output structure
+            if flat_output:
+                rel_path = f"{col}.html"
+            else:
+                rel_path = f"{col}/dashboard.html"
             col_display = col.replace("cell_type_", "").replace("_", " ").title()
 
             links_html.append(f"""
@@ -592,7 +642,6 @@ def _build_header(title: str) -> str:
 <html>
 <head>
     <title>{title}</title>
-    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
     <style>
         * {{
             box-sizing: border-box;
@@ -811,7 +860,7 @@ def _build_row_composition_diversity(data: Dict) -> str:
         xaxis=dict(title="Proportion (%)", tickformat=".1f"),
         plot_bgcolor="white",
     )
-    bar_html = bar_fig.to_html(full_html=False, include_plotlyjs=False)
+    bar_html = bar_fig.to_html(full_html=False, include_plotlyjs=True)
 
     # Diversity scatter plot
     df_div = data["diversity"]

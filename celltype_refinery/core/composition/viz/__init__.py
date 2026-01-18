@@ -93,6 +93,7 @@ def generate_all_figures(
             cell_type_col=cell_type_col,
             top_n=top_n,
             dpi=dpi,
+            region_order=config.region_order if config.region_order else None,
         )
     except Exception as e:
         logger.warning(f"Failed to generate composition_by_region: {e}")
@@ -129,6 +130,7 @@ def generate_all_figures(
                 result.diversity_by_sample,
                 output_dir / "diversity_by_region.png",
                 dpi=dpi,
+                region_order=config.region_order if config.region_order else None,
             )
         except Exception as e:
             logger.warning(f"Failed to generate diversity_by_region: {e}")
@@ -174,6 +176,7 @@ def generate_all_figures(
 def generate_dashboard(
     output_dir: Path,
     output_path: Optional[Path] = None,
+    html_dir: Optional[Path] = None,
     title: str = "Cell-Type Composition Analysis",
 ) -> Optional[Path]:
     """Generate interactive HTML dashboard from composition CSVs.
@@ -187,6 +190,13 @@ def generate_dashboard(
         Directory containing composition output CSVs
     output_path : Path, optional
         Path to save HTML. If None, saves to output_dir/dashboard.html
+        Ignored if html_dir is specified.
+    html_dir : Path, optional
+        Output directory for HTML dashboards (flat structure).
+        If specified, all HTML files are written to this directory:
+        - Multi-column: index.html + <column>.html files
+        - Single-column: dashboard.html
+        This makes the HTML output easy to share.
     title : str
         Dashboard title
 
@@ -200,6 +210,7 @@ def generate_dashboard(
     return generate_composition_dashboard(
         output_dir=output_dir,
         output_path=output_path,
+        html_dir=html_dir,
         title=title,
     )
 

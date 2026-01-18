@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Tuple
+from typing import List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -16,6 +16,8 @@ def plot_diversity_distribution(
     figsize: Tuple[int, int] = (10, 6),
     dpi: int = 200,
     title: str = "Local Cell-Type Diversity",
+    organ: Optional[str] = None,
+    region_order: Optional[List[str]] = None,
 ) -> None:
     """Plot distribution of local diversity by region.
 
@@ -33,6 +35,10 @@ def plot_diversity_distribution(
         Figure resolution
     title : str
         Plot title
+    organ : str, optional
+        Organ name for region ordering (e.g., 'fallopian_tube', 'uterus')
+    region_order : List[str], optional
+        Explicit region order (takes precedence over organ)
     """
     if diversity_by_sample.empty:
         return
@@ -41,16 +47,26 @@ def plot_diversity_distribution(
 
     if "region" in diversity_by_sample.columns:
         # Boxplot by region
-        regions = diversity_by_sample["region"].unique()
+        regions = list(diversity_by_sample["region"].unique())
 
-        # Define region order if standard FT regions
-        region_order = ["fimbriae", "infundibulum", "ampulla", "isthmus"]
-        available_regions = [r for r in region_order if r in regions]
-        other_regions = [r for r in regions if r not in region_order]
-        ordered_regions = available_regions + sorted(other_regions)
-
-        # Filter to available regions
-        ordered_regions = [r for r in ordered_regions if r in regions]
+        # Determine region order
+        if region_order is not None:
+            # Use explicit region order
+            ordered_regions = [r for r in region_order if r in regions]
+            other_regions = [r for r in regions if r not in region_order]
+            ordered_regions = ordered_regions + sorted(other_regions)
+        elif organ:
+            # Use organ config for region ordering
+            try:
+                from celltype_refinery.config import get_organ_config
+                organ_config = get_organ_config(organ)
+                ordered_regions = organ_config.sort_regions(regions)
+            except (ImportError, ValueError):
+                # Fallback to alphabetical
+                ordered_regions = sorted(regions)
+        else:
+            # Default: alphabetical order
+            ordered_regions = sorted(regions)
 
         sns.boxplot(
             data=diversity_by_sample,

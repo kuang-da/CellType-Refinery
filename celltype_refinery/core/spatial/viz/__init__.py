@@ -10,7 +10,7 @@ Provides plotting functions for:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 import logging
 
 if TYPE_CHECKING:
@@ -24,6 +24,7 @@ def generate_all_visualizations(
     result: "SpatialResult",
     output_dir: Path,
     config: "SpatialConfig",
+    organ: Optional[str] = None,
 ) -> None:
     """Generate all visualizations for spatial analysis results.
 
@@ -35,6 +36,8 @@ def generate_all_visualizations(
         Output directory (figures will be saved in output_dir/figures/)
     config : SpatialConfig
         Configuration with visualization settings
+    organ : str, optional
+        Organ name for region ordering (e.g., 'fallopian_tube', 'uterus')
     """
     output_dir = Path(output_dir)
     figures_dir = output_dir / "figures"
@@ -101,6 +104,7 @@ def generate_all_visualizations(
                 output_path=figures_dir / "local_diversity_distribution.png",
                 figsize=viz_config.figsize_bar,
                 dpi=viz_config.dpi,
+                organ=organ,
             )
             logger.info("Generated diversity distribution")
         except Exception as e:

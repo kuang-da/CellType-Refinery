@@ -265,6 +265,16 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         default=False,
         help="Verbose logging",
     )
+    parser.add_argument(
+        "--organ",
+        type=str,
+        default=None,
+        help=(
+            "Organ type for region ordering in visualizations. "
+            "Available: 'fallopian_tube' (aliases: ft), 'uterus', etc. "
+            "Default: alphabetical order"
+        ),
+    )
 
     return parser.parse_args(argv)
 
@@ -379,9 +389,9 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             if multi_column:
                 for col, col_result in result.results.items():
                     col_dir = output_dir / col.replace("/", "_").replace(" ", "_")
-                    generate_all_visualizations(col_result, col_dir, config)
+                    generate_all_visualizations(col_result, col_dir, config, organ=args.organ)
             else:
-                generate_all_visualizations(result, output_dir, config)
+                generate_all_visualizations(result, output_dir, config, organ=args.organ)
         except ImportError as e:
             logger.warning(f"Visualization module not available, skipping plots: {e}")
         except Exception as e:

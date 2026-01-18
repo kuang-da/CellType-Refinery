@@ -66,11 +66,11 @@ from .batch import BatchCorrector, BatchCorrectionResult, BatchDiagnostics
 
 
 
-# Canonical FT region order (anatomical: distal to proximal, from ovary toward uterus)
-FT_REGION_ORDER: List[str] = ["fimbriae", "infundibulum", "ampulla", "isthmus"]
-
-
-def sort_regions_canonical(regions: List[str], region_order: Optional[List[str]] = None) -> List[str]:
+def sort_regions_canonical(
+    regions: List[str],
+    region_order: Optional[List[str]] = None,
+    organ: Optional[str] = None,
+) -> List[str]:
     """Sort regions by canonical anatomical order.
 
     Parameters
@@ -78,22 +78,36 @@ def sort_regions_canonical(regions: List[str], region_order: Optional[List[str]]
     regions : List[str]
         Region names to sort
     region_order : Optional[List[str]]
-        Custom region order (default: FT_REGION_ORDER)
+        Explicit region order (takes precedence over organ)
+    organ : Optional[str]
+        Organ name for region ordering (e.g., 'fallopian_tube', 'uterus').
+        Used only if region_order is None.
 
     Returns
     -------
     List[str]
         Sorted region names
     """
-    if region_order is None:
-        region_order = FT_REGION_ORDER
+    # If explicit region_order provided, use it
+    if region_order is not None:
+        order_map = {r.lower(): i for i, r in enumerate(region_order)}
 
-    order_map = {r.lower(): i for i, r in enumerate(region_order)}
+        def get_order(r: str) -> int:
+            return order_map.get(r.lower(), len(region_order))
 
-    def get_order(r: str) -> int:
-        return order_map.get(r.lower(), len(region_order))
+        return sorted(regions, key=get_order)
 
-    return sorted(regions, key=get_order)
+    # If organ specified, try to get order from organ config
+    if organ:
+        try:
+            from celltype_refinery.config import get_organ_config
+            organ_config = get_organ_config(organ)
+            return organ_config.sort_regions(regions)
+        except (ImportError, ValueError):
+            pass  # Fallback to alphabetical
+
+    # Default: alphabetical order
+    return sorted(regions, key=lambda r: r.lower())
 
 
 def setup_logging(
@@ -3977,6 +3991,16 @@ Examples:
         type=Path,
         default=None,
         help="Directory for log file (default: console only)",
+    )
+    parser.add_argument(
+        "--organ",
+        type=str,
+        default=None,
+        help=(
+            "Organ type for region ordering in visualizations. "
+            "Available: 'fallopian_tube' (aliases: ft), 'uterus', etc. "
+            "Default: alphabetical order"
+        ),
     )
 
     args = parser.parse_args()

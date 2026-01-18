@@ -1269,6 +1269,7 @@ def export_composition_stats(
     output_dir: Path,
     cell_type_col: str,
     logger: Optional[logging.Logger] = None,
+    organ: Optional[str] = None,
 ) -> Dict[str, Path]:
     """Export composition statistics (global, by sample, by region, by donor).
 
@@ -1282,6 +1283,9 @@ def export_composition_stats(
         Column name containing cell type labels
     logger : logging.Logger, optional
         Logger instance
+    organ : str, optional
+        Organ name for region ordering. If None, uses alphabetical order.
+        Available: 'fallopian_tube' (aliases: ft), 'uterus', etc.
 
     Returns
     -------
@@ -1359,14 +1363,18 @@ def export_composition_stats(
         logger.info(f'  Wrote composition_by_region_refined.csv ({len(comp_region_long)} rows)')
 
         # === REFERENCE FORMAT PIVOT TABLES ===
-        # Use reference region order (anatomical: proximal to distal)
-        region_order = ["isthmus", "ampulla", "infundibulum", "fimbriae"]
+        # Use organ-specific region order if available
         available_regions = comp_region_long["region"].unique().tolist()
-        region_order = [r for r in region_order if r in available_regions]
-        # Add any regions not in the default order
-        for r in available_regions:
-            if r not in region_order:
-                region_order.append(r)
+        if organ:
+            try:
+                from celltype_refinery.config import get_organ_config
+                organ_config = get_organ_config(organ)
+                region_order = organ_config.sort_regions(available_regions)
+            except (ImportError, ValueError):
+                # Fallback to alphabetical if organ config not available
+                region_order = sorted(available_regions)
+        else:
+            region_order = sorted(available_regions)
 
         # === TABLE 1: Raw Counts (cell types as rows, regions as columns) ===
         counts_pivot = comp_region_long.pivot_table(

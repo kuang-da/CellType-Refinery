@@ -7,7 +7,7 @@ rather than being hardcoded.
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import yaml
 
@@ -214,6 +214,8 @@ class CompositionConfig:
         Column name for donor in adata.obs
     region_order : List[str]
         Ordered list of regions for consistent output
+    region_colors : Dict[str, str]
+        Hex colors for regions (used in visualizations)
     cell_type_columns : List[str]
         Cell type columns to analyze
     skip_enrichment : bool
@@ -232,6 +234,7 @@ class CompositionConfig:
     sample_column: str = "sample_id"
     donor_column: str = "donor"
     region_order: List[str] = field(default_factory=list)
+    region_colors: Dict[str, str] = field(default_factory=dict)
     cell_type_columns: List[str] = field(default_factory=lambda: ["cell_type"])
     skip_enrichment: bool = False
     skip_biology: bool = False
@@ -283,6 +286,7 @@ class CompositionConfig:
             sample_column=data.get("sample_column", "sample_id"),
             donor_column=data.get("donor_column", "donor"),
             region_order=data.get("region_order", []),
+            region_colors=data.get("region_colors", {}),
             cell_type_columns=data.get("cell_type_columns", ["cell_type"]),
             skip_enrichment=data.get("skip_enrichment", False),
             skip_biology=data.get("skip_biology", False),
@@ -338,6 +342,7 @@ class CompositionConfig:
             "sample_column": self.sample_column,
             "donor_column": self.donor_column,
             "region_order": self.region_order,
+            "region_colors": self.region_colors,
             "cell_type_columns": self.cell_type_columns,
             "skip_enrichment": self.skip_enrichment,
             "skip_biology": self.skip_biology,
@@ -354,3 +359,26 @@ class CompositionConfig:
         """
         with open(path, "w") as f:
             yaml.dump(self.to_dict(), f, default_flow_style=False, sort_keys=False)
+
+    def apply_organ_config(self, organ_config: "OrganConfig") -> None:
+        """Apply organ-specific configuration.
+
+        Updates region_order and region_colors from the organ configuration.
+        Only updates fields that are empty (doesn't override explicit settings).
+
+        Parameters
+        ----------
+        organ_config : OrganConfig
+            Organ configuration (from celltype_refinery.config)
+        """
+        # Only apply if current values are empty (don't override explicit config)
+        if not self.region_order and organ_config.region_order:
+            self.region_order = organ_config.region_order.copy()
+        if not self.region_colors and organ_config.region_colors:
+            self.region_colors = organ_config.region_colors.copy()
+
+
+# Type hint for OrganConfig (avoid circular import)
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from celltype_refinery.config import OrganConfig

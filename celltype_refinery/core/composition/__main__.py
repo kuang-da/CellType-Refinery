@@ -159,6 +159,14 @@ Examples:
         action="store_true",
         help="Generate interactive HTML dashboard (requires plotly)",
     )
+    parser.add_argument(
+        "--html-dir",
+        type=Path,
+        default=None,
+        help="Output HTML dashboards to this directory (flat structure). "
+             "All HTML files will be self-contained and in one folder for easy sharing. "
+             "If not specified, HTML files go into the composition output directory.",
+    )
 
     # Visualization options
     parser.add_argument(
@@ -262,7 +270,8 @@ def main() -> int:
     from .config import CompositionConfig
     from .engine import CompositionEngine
     from .export import export_all, export_all_multi
-    from .biology import get_organ_metrics, list_available_organs
+    from .biology import get_organ_metrics, list_available_organs as list_biology_organs
+    from celltype_refinery.config import get_organ_config, list_available_organs as list_organ_configs
 
     # Load config
     if args.config and args.config.exists():
@@ -271,6 +280,19 @@ def main() -> int:
     else:
         logger.info("Using default configuration")
         config = CompositionConfig.default()
+
+    # Apply organ-specific region ordering and colors
+    if args.organ:
+        try:
+            organ_config = get_organ_config(args.organ)
+            config.apply_organ_config(organ_config)
+            logger.info(f"Organ config: {organ_config.organ_name}")
+            logger.info(f"  Region order: {organ_config.region_order}")
+            logger.info(f"  Region colors: {len(organ_config.region_colors)} colors defined")
+        except ValueError as e:
+            logger.error(f"Invalid organ: {e}")
+            logger.error(f"Available organs: {list_organ_configs()}")
+            return 1
 
     # Apply skip flags to config (user preference: adapt __main__ to config)
     config.skip_enrichment = args.skip_enrichment
@@ -287,11 +309,11 @@ def main() -> int:
     if args.organ:
         try:
             biology_metrics = get_organ_metrics(args.organ)
-            logger.info(f"Organ: {args.organ} -> {biology_metrics.tissue_name} metrics")
+            logger.info(f"Biology metrics: {biology_metrics.tissue_name}")
             logger.info(f"  Available metrics: {biology_metrics.metric_names}")
         except ValueError as e:
-            logger.error(f"Invalid organ: {e}")
-            logger.error(f"Available organs: {list_available_organs()}")
+            logger.error(f"Invalid organ for biology metrics: {e}")
+            logger.error(f"Available organs: {list_biology_organs()}")
             return 1
     else:
         biology_metrics = get_organ_metrics(None)  # Generic
@@ -441,14 +463,24 @@ def main() -> int:
         try:
             from .viz import generate_dashboard
 
+            # Determine output path based on html_dir
+            if args.html_dir:
+                logger.info(f"  HTML output directory: {args.html_dir}")
+                output_path = None  # Will be determined by html_dir
+            else:
+                output_path = args.out / "dashboard.html"
+
             dashboard_path = generate_dashboard(
                 output_dir=args.out,
-                output_path=args.out / "dashboard.html",
+                output_path=output_path,
+                html_dir=args.html_dir,
                 title="Cell-Type Composition Analysis",
             )
 
             if dashboard_path:
                 logger.info(f"  Dashboard: {dashboard_path.name}")
+                if args.html_dir:
+                    logger.info(f"  All HTML files saved to: {args.html_dir}")
             else:
                 logger.warning("Dashboard generation failed (plotly may not be installed)")
 

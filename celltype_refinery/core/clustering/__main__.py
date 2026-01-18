@@ -146,7 +146,8 @@ class StageHRunConfig:
     clustering_only: bool = False
     expand_markers: bool = True
     generate_audit_cards: bool = True
-    generate_review_checklist: bool = True
+    generate_diagnostic_report: bool = True  # Generate diagnostic_report.csv (replaces review checklist)
+    generate_composition: bool = True  # Generate composition_*.csv files
     technical_markers: List[str] = field(default_factory=lambda: ["DAPI", "Collagen IV", "Beta-actin"])
 
 
@@ -210,6 +211,7 @@ def run_stage_h(
     skip_figures: bool = False,
     dpi: int = 200,
     log_dir: Optional[Path] = None,
+    organ: Optional[str] = None,
 ) -> "anndata.AnnData":
     """Run Stage H: Coarse clustering and cell-type annotation.
 
@@ -239,6 +241,8 @@ def run_stage_h(
         Figure resolution
     log_dir : Optional[Path]
         Directory for log file
+    organ : str, optional
+        Organ name for region ordering in composition tables
 
     Returns
     -------
@@ -499,15 +503,36 @@ def run_stage_h(
         )
         logger.info(f"Generated audit cards: {audit_result.html_path}")
 
-    # Generate review checklist (enabled by default)
-    if config.generate_review_checklist:
-        from ..checklist import ChecklistEngine, ChecklistConfig
-        checklist_engine = ChecklistEngine(ChecklistConfig(), logger)
-        checklist_result = checklist_engine.execute(
+    # Generate diagnostic report (replaces checklist - produces Stage I-compatible outputs)
+    if config.generate_diagnostic_report:
+        from ..diagnosis import DiagnosticEngine, CriteriaConfig
+        diagnostic_engine = DiagnosticEngine(config=CriteriaConfig())
+        diagnostic_report = diagnostic_engine.diagnose(
             cluster_annotations=result.cluster_annotations,
-            output_dir=output_dir,
+            marker_scores=result.marker_scores,
         )
-        logger.info(f"Generated review checklist: {checklist_result.md_path}")
+        diagnostic_report.to_csv(output_dir / "diagnostic_report.csv", index=False)
+        logger.info(f"Generated diagnostic report: {output_dir / 'diagnostic_report.csv'}")
+
+        # Generate groups_derived.yaml
+        _generate_groups_derived(
+            cluster_annotations=result.cluster_annotations,
+            diagnostic_report=diagnostic_report,
+            marker_map_path=marker_map_path,
+            output_dir=output_dir,
+            logger=logger,
+        )
+
+    # Generate composition statistics (Stage I-compatible outputs)
+    if config.generate_composition:
+        _generate_composition_exports(
+            adata=adata,
+            cluster_annotations=result.cluster_annotations,
+            marker_scores=result.marker_scores,
+            output_dir=output_dir,
+            logger=logger,
+            organ=organ,
+        )
 
     # Save AnnData with annotations
     h5ad_path = output_dir / "coarse_clusters.h5ad"
@@ -627,6 +652,284 @@ def _generate_stage_h_figures(
             logger.warning(f"Failed to generate cell type composition figure: {e}")
 
     return generated
+
+
+def _generate_groups_derived(
+    cluster_annotations: pd.DataFrame,
+    diagnostic_report: pd.DataFrame,
+    marker_map_path: Optional[Path],
+    output_dir: Path,
+    logger: Optional[logging.Logger] = None,
+) -> None:
+    """Generate groups_derived.yaml with cluster groupings by root label.
+
+    This produces Stage I-compatible group structure for unified review.
+
+    Parameters
+    ----------
+    cluster_annotations : pd.DataFrame
+        Cluster annotation table with assigned_label column
+    diagnostic_report : pd.DataFrame
+        Diagnostic report with recommendations
+    marker_map_path : Optional[Path]
+        Path to marker map JSON file
+    output_dir : Path
+        Output directory
+    logger : Optional[logging.Logger]
+        Logger instance
+    """
+    import yaml
+    from datetime import datetime
+
+    if logger is None:
+        logger = logging.getLogger(__name__)
+
+    # Helper to derive root label (matches diagnosis/__main__.py logic)
+    def derive_root_label(assigned_label: str) -> str:
+        if pd.isna(assigned_label) or assigned_label == "Unassigned":
+            return "Unassigned"
+        # Handle hybrid labels (contains ~)
+        if "~" in str(assigned_label):
+            return "Hybrids"
+        # Split on "→" and take first part
+        parts = str(assigned_label).split("→")
+        return parts[0]
+
+    # Add root_label column to work with
+    annotations = cluster_annotations.copy()
+    annotations["root_label"] = annotations["assigned_label"].apply(derive_root_label)
+
+    # Determine which clusters need subclustering
+    subcluster_ids = set()
+    if "recommendation" in diagnostic_report.columns:
+        subcluster_ids = set(
+            diagnostic_report[diagnostic_report["recommendation"] == "SUBCLUSTER"]["cluster_id"].astype(str)
+        )
+
+    # Group clusters by root_label
+    groups = []
+    group_order = ["Epithelium", "Endothelium", "Mesenchymal Cells", "Immune Cells", "Hybrids", "Unassigned"]
+
+    # Get all root labels present in annotations
+    present_roots = set(annotations["root_label"].unique())
+
+    for root in group_order:
+        if root not in present_roots:
+            continue
+
+        group_clusters = annotations[annotations["root_label"] == root]
+        cluster_ids = sorted(group_clusters["cluster_id"].astype(str).unique())
+        subcluster_cluster_ids = [cid for cid in cluster_ids if cid in subcluster_ids]
+        n_cells = int(group_clusters["n_cells"].sum()) if "n_cells" in group_clusters.columns else 0
+
+        groups.append({
+            "name": root,
+            "cluster_ids": cluster_ids,
+            "focus_label": root,
+            "subcluster_ids": subcluster_cluster_ids,
+            "n_clusters": len(cluster_ids),
+            "n_subcluster": len(subcluster_cluster_ids),
+            "n_cells": n_cells,
+        })
+
+    # Add any roots not in the standard order
+    extra_roots = present_roots - set(group_order)
+    for root in sorted(extra_roots):
+        group_clusters = annotations[annotations["root_label"] == root]
+        cluster_ids = sorted(group_clusters["cluster_id"].astype(str).unique())
+        subcluster_cluster_ids = [cid for cid in cluster_ids if cid in subcluster_ids]
+        n_cells = int(group_clusters["n_cells"].sum()) if "n_cells" in group_clusters.columns else 0
+
+        groups.append({
+            "name": root,
+            "cluster_ids": cluster_ids,
+            "focus_label": root,
+            "subcluster_ids": subcluster_cluster_ids,
+            "n_clusters": len(cluster_ids),
+            "n_subcluster": len(subcluster_cluster_ids),
+            "n_cells": n_cells,
+        })
+
+    # Build groups_derived structure
+    groups_derived = {
+        "version": "2.0",
+        "iteration": 0,  # Stage H is iteration 0
+        "generated_at": datetime.now().isoformat(),
+        "marker_map": str(marker_map_path) if marker_map_path else "",
+        "groups": groups,
+    }
+
+    # Write groups_derived.yaml
+    groups_path = output_dir / "groups_derived.yaml"
+    with open(groups_path, "w") as f:
+        yaml.dump(groups_derived, f, default_flow_style=False, sort_keys=False)
+    logger.info(f"Generated groups_derived.yaml: {groups_path}")
+
+
+def _generate_composition_exports(
+    adata: "anndata.AnnData",
+    cluster_annotations: pd.DataFrame,
+    marker_scores: pd.DataFrame,
+    output_dir: Path,
+    logger: Optional[logging.Logger] = None,
+    organ: Optional[str] = None,
+) -> None:
+    """Generate composition statistics and cluster_annotations_enhanced.csv.
+
+    This produces Stage I-compatible composition outputs for unified review.
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        AnnData with cell type annotations
+    cluster_annotations : pd.DataFrame
+        Cluster annotation table
+    marker_scores : pd.DataFrame
+        Marker scoring results
+    output_dir : Path
+        Output directory
+    logger : Optional[logging.Logger]
+        Logger instance
+    organ : str, optional
+        Organ name for region ordering in composition tables
+    """
+    if logger is None:
+        logger = logging.getLogger(__name__)
+
+    # Detect cell type column
+    cell_type_col = None
+    for col in ["cell_type_auto", "cell_type_curated", "cell_type"]:
+        if col in adata.obs.columns:
+            cell_type_col = col
+            break
+
+    if cell_type_col is None:
+        logger.warning("No cell type column found, skipping composition exports")
+        return
+
+    # Generate composition statistics using the same function as Stage I
+    try:
+        from ..annotation.export import export_composition_stats
+
+        export_composition_stats(
+            adata=adata,
+            output_dir=output_dir,
+            cell_type_col=cell_type_col,
+            logger=logger,
+            organ=organ,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to generate composition exports: {e}")
+
+    # Generate cluster_annotations_enhanced.csv
+    try:
+        _generate_cluster_annotations_enhanced(
+            cluster_annotations=cluster_annotations,
+            marker_scores=marker_scores,
+            output_dir=output_dir,
+            logger=logger,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to generate cluster_annotations_enhanced.csv: {e}")
+
+
+def _generate_cluster_annotations_enhanced(
+    cluster_annotations: pd.DataFrame,
+    marker_scores: pd.DataFrame,
+    output_dir: Path,
+    logger: Optional[logging.Logger] = None,
+) -> None:
+    """Generate cluster_annotations_enhanced.csv with extended fields.
+
+    This adds mean_enrichment, mean_positive_fraction, confidence_level,
+    runner_up_label, runner_up_score, and gap columns.
+
+    Parameters
+    ----------
+    cluster_annotations : pd.DataFrame
+        Cluster annotation table
+    marker_scores : pd.DataFrame
+        Marker scoring results
+    output_dir : Path
+        Output directory
+    logger : Optional[logging.Logger]
+        Logger instance
+    """
+    if logger is None:
+        logger = logging.getLogger(__name__)
+
+    enhanced = cluster_annotations.copy()
+
+    # Add origin_cluster and iteration_created columns (Stage H is iteration 0)
+    if "origin_cluster" not in enhanced.columns:
+        enhanced["origin_cluster"] = enhanced["cluster_id"]
+    if "iteration_created" not in enhanced.columns:
+        enhanced["iteration_created"] = 0
+
+    # Add proportion column
+    total_cells = enhanced["n_cells"].sum() if "n_cells" in enhanced.columns else 1
+    if "proportion" not in enhanced.columns and "n_cells" in enhanced.columns:
+        enhanced["proportion"] = (enhanced["n_cells"] / total_cells * 100).round(2)
+
+    # Compute mean_enrichment and mean_positive_fraction from marker_scores
+    if marker_scores is not None and len(marker_scores) > 0:
+        # Group by cluster_id and compute means
+        if "cluster_id" in marker_scores.columns:
+            cluster_stats = marker_scores.groupby("cluster_id").agg({
+                "mean_enrichment": "mean",
+                "mean_positive_fraction": "mean",
+            }).reset_index() if "mean_enrichment" in marker_scores.columns else None
+
+            if cluster_stats is not None:
+                enhanced = enhanced.merge(
+                    cluster_stats,
+                    on="cluster_id",
+                    how="left",
+                    suffixes=("", "_scores"),
+                )
+
+    # Fill missing columns with defaults
+    for col, default in [
+        ("mean_enrichment", 0.0),
+        ("mean_positive_fraction", 0.0),
+    ]:
+        if col not in enhanced.columns:
+            enhanced[col] = default
+
+    # Add confidence_level based on assigned_score
+    def score_to_confidence(score):
+        if pd.isna(score) or score < 0.5:
+            return "very_low"
+        elif score < 1.0:
+            return "low"
+        elif score < 1.5:
+            return "medium"
+        else:
+            return "high"
+
+    if "assigned_score" in enhanced.columns:
+        enhanced["confidence_level"] = enhanced["assigned_score"].apply(score_to_confidence)
+    else:
+        enhanced["confidence_level"] = "unknown"
+
+    # Add runner_up columns and gap (compute from marker_scores if available)
+    for col in ["runner_up_label", "runner_up_score", "gap"]:
+        if col not in enhanced.columns:
+            if col == "runner_up_label":
+                enhanced[col] = ""
+            else:
+                enhanced[col] = 0.0
+
+    # Compute gap from confidence/margin if available
+    if "min_margin_along_path" in enhanced.columns and "gap" not in enhanced.columns:
+        enhanced["gap"] = enhanced["min_margin_along_path"]
+    elif "confidence" in enhanced.columns and "gap" not in enhanced.columns:
+        enhanced["gap"] = enhanced["confidence"]
+
+    # Save enhanced annotations
+    enhanced_path = output_dir / "cluster_annotations_enhanced.csv"
+    enhanced.to_csv(enhanced_path, index=False)
+    logger.info(f"Generated cluster_annotations_enhanced.csv: {enhanced_path}")
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
@@ -792,6 +1095,16 @@ for reproducible marker map iterations.
         default=None,
         help="Directory for log file (default: console only)",
     )
+    parser.add_argument(
+        "--organ",
+        type=str,
+        default=None,
+        help=(
+            "Organ type for region ordering in composition exports. "
+            "Available: 'fallopian_tube' (aliases: ft), 'uterus', etc. "
+            "Default: alphabetical order"
+        ),
+    )
 
     return parser.parse_args(argv)
 
@@ -836,6 +1149,7 @@ def main(argv: Optional[Sequence[str]] = None):
             skip_figures=args.skip_figures,
             dpi=args.dpi,
             log_dir=args.log_dir,
+            organ=args.organ,
         )
     except Exception as e:
         logging.error(f"Stage H failed: {e}")
