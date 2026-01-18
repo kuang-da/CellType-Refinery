@@ -130,6 +130,7 @@ def cmd_export_review(args: argparse.Namespace) -> int:
         groups_skipped=groups_skipped,
         final_output_path=final_output_path,
         logger=logger,
+        organ=args.organ,
     )
 
     return 0
@@ -293,6 +294,10 @@ def main():
     review_parser.add_argument(
         '--stage-h-dir',
         help='Path to Stage H directory (for workflow state)',
+    )
+    review_parser.add_argument(
+        '--organ',
+        help='Organ type for region ordering (e.g., fallopian_tube, uterus)',
     )
     review_parser.add_argument(
         '--verbose', '-v', action='store_true',

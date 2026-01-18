@@ -475,6 +475,8 @@ def main() -> int:
                 output_path=output_path,
                 html_dir=args.html_dir,
                 title="Cell-Type Composition Analysis",
+                region_order=config.region_order if config.region_order else None,
+                region_colors=config.region_colors if config.region_colors else None,
             )
 
             if dashboard_path:

@@ -1024,7 +1024,7 @@ def _build_row_region_biology(data: Dict) -> str:
     # Biology metrics (tissue-agnostic)
     biology_html = ""
     if data.get("biology_region") is not None:
-        df_bio = data["biology_region"]
+        df_bio = data["biology_region"].copy()
 
         # Detect the region/group column name (support both 'region' and 'group_id')
         bio_region_col = None
@@ -1037,6 +1037,15 @@ def _build_row_region_biology(data: Dict) -> str:
             # No region column found, skip biology metrics
             pass
         else:
+            # Sort biology data by region order
+            bio_regions = _sort_regions(df_bio[bio_region_col].unique(), region_order)
+            # Create order mapping for sorting
+            bio_order_map = {r: i for i, r in enumerate(bio_regions)}
+            df_bio["_sort_order"] = df_bio[bio_region_col].map(
+                lambda x: bio_order_map.get(x, len(bio_regions))
+            )
+            df_bio = df_bio.sort_values("_sort_order").drop(columns=["_sort_order"])
+
             # Auto-detect available metrics from columns
             available_metrics = []
             for col in df_bio.columns:

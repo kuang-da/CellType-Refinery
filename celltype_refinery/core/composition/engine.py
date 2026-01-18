@@ -257,6 +257,7 @@ class CompositionEngine:
                     cell_type_col=cell_type_col,
                     patterns=config.patterns,
                     metrics_impl=self.biology_metrics,
+                    group_order=config.region_order if config.region_order else None,
                 )
 
         # Regional enrichment (optional)
@@ -274,10 +275,14 @@ class CompositionEngine:
                 min_samples_per_region=config.enrichment.min_samples_per_region,
                 correction_method=config.enrichment.correction_method,
                 alpha=config.enrichment.alpha,
+                region_order=config.region_order if config.region_order else None,
             )
 
             if len(enrichment) > 0:
-                enrichment_summary_region = summarize_enrichments_by_region(enrichment)
+                enrichment_summary_region = summarize_enrichments_by_region(
+                    enrichment,
+                    region_order=config.region_order if config.region_order else None,
+                )
                 enrichment_summary_cell_type = summarize_enrichments_by_cell_type(enrichment)
 
         end_time = datetime.now()

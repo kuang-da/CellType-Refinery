@@ -2409,6 +2409,7 @@ def run_review_exports(
     groups_skipped: Optional[List[str]] = None,
     final_output_path: Optional[str] = None,
     logger: Optional[logging.Logger] = None,
+    organ: Optional[str] = None,
 ) -> Dict[str, Path]:
     """Run all review exports (composition, annotations, summary, workflow state).
 
@@ -2447,6 +2448,8 @@ def run_review_exports(
         Path to refined_final.h5ad
     logger : logging.Logger, optional
         Logger instance
+    organ : str, optional
+        Organ name for region ordering (e.g., 'fallopian_tube', 'uterus')
 
     Returns
     -------
@@ -2469,7 +2472,7 @@ def run_review_exports(
     logger.info(f'Using cluster column: {cluster_col}')
 
     # Export composition statistics
-    comp_paths = export_composition_stats(adata, output_dir, cell_type_col, logger)
+    comp_paths = export_composition_stats(adata, output_dir, cell_type_col, logger, organ=organ)
     output_paths.update(comp_paths)
 
     # Export marker scores

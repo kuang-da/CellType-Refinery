@@ -526,6 +526,7 @@ def compute_biology_metrics(
     cell_type_col: str,
     patterns: PatternConfig,
     metrics_impl: Optional[TissueBiologyMetrics] = None,
+    group_order: Optional[List[str]] = None,
 ) -> pd.DataFrame:
     """Convenience function to compute biology metrics.
 
@@ -541,6 +542,9 @@ def compute_biology_metrics(
         Pattern configuration
     metrics_impl : TissueBiologyMetrics, optional
         Custom metrics implementation. Uses GenericBiologyMetrics if None.
+    group_order : List[str], optional
+        Order for groups (e.g., region order). If provided, results will be
+        sorted by this order (case-insensitive).
 
     Returns
     -------
@@ -550,4 +554,25 @@ def compute_biology_metrics(
     if metrics_impl is None:
         metrics_impl = get_default_biology_metrics()
 
-    return metrics_impl.compute_by_group(df, group_col, cell_type_col, patterns)
+    result = metrics_impl.compute_by_group(df, group_col, cell_type_col, patterns)
+
+    # Sort by group_order if provided
+    if group_order is not None and len(result) > 0 and "group_id" in result.columns:
+        # Create case-insensitive order mapping
+        order_lower = {g.lower(): i for i, g in enumerate(group_order)}
+
+        def get_sort_key(group_id: str) -> Tuple[int, str]:
+            """Return sort key: (order_index, group_id)."""
+            group_lower = str(group_id).lower()
+            if group_lower in order_lower:
+                return (order_lower[group_lower], group_id)
+            # Unknown groups go to the end, sorted alphabetically
+            return (len(group_order), group_id)
+
+        # Sort the dataframe
+        result = result.copy()
+        result["_sort_key"] = result["group_id"].apply(get_sort_key)
+        result = result.sort_values("_sort_key").drop(columns=["_sort_key"])
+        result = result.reset_index(drop=True)
+
+    return result

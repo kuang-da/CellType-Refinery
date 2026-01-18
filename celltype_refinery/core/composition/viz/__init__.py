@@ -153,6 +153,7 @@ def generate_all_figures(
                 result.biology_by_sample,
                 output_dir / "biology_metrics.png",
                 dpi=dpi,
+                region_order=config.region_order if config.region_order else None,
             )
         except Exception as e:
             logger.warning(f"Failed to generate biology_metrics: {e}")
@@ -165,6 +166,7 @@ def generate_all_figures(
                 result.enrichment,
                 output_dir / "enrichment_heatmap.png",
                 dpi=dpi,
+                region_order=config.region_order if config.region_order else None,
             )
         except Exception as e:
             logger.warning(f"Failed to generate enrichment_heatmap: {e}")
@@ -178,6 +180,8 @@ def generate_dashboard(
     output_path: Optional[Path] = None,
     html_dir: Optional[Path] = None,
     title: str = "Cell-Type Composition Analysis",
+    region_order: Optional[list] = None,
+    region_colors: Optional[Dict[str, str]] = None,
 ) -> Optional[Path]:
     """Generate interactive HTML dashboard from composition CSVs.
 
@@ -199,6 +203,10 @@ def generate_dashboard(
         This makes the HTML output easy to share.
     title : str
         Dashboard title
+    region_order : list, optional
+        Canonical region order for consistent display
+    region_colors : Dict[str, str], optional
+        Color mapping for regions
 
     Returns
     -------
@@ -212,6 +220,8 @@ def generate_dashboard(
         output_path=output_path,
         html_dir=html_dir,
         title=title,
+        region_order=region_order,
+        region_colors=region_colors,
     )
 
 

@@ -363,7 +363,7 @@ class CompositionConfig:
     def apply_organ_config(self, organ_config: "OrganConfig") -> None:
         """Apply organ-specific configuration.
 
-        Updates region_order and region_colors from the organ configuration.
+        Updates region_order, region_colors, and patterns from the organ configuration.
         Only updates fields that are empty (doesn't override explicit settings).
 
         Parameters
@@ -376,6 +376,23 @@ class CompositionConfig:
             self.region_order = organ_config.region_order.copy()
         if not self.region_colors and organ_config.region_colors:
             self.region_colors = organ_config.region_colors.copy()
+
+        # Apply organ-specific patterns to PatternConfig.custom
+        # Standard keys are handled by PatternConfig directly; custom keys go to .custom
+        if organ_config.patterns:
+            standard_keys = {"epithelial", "stromal", "smooth_muscle", "immune",
+                           "endothelial", "ciliated", "secretory"}
+            for key, patterns in organ_config.patterns.items():
+                if key in standard_keys:
+                    # Update standard field if it's using defaults (check by comparing)
+                    current = getattr(self.patterns, key, [])
+                    default_patterns = getattr(PatternConfig(), key, [])
+                    if current == default_patterns:
+                        setattr(self.patterns, key, patterns)
+                else:
+                    # Add to custom dict (don't override if already set)
+                    if key not in self.patterns.custom:
+                        self.patterns.custom[key] = patterns
 
 
 # Type hint for OrganConfig (avoid circular import)

@@ -20,6 +20,7 @@ def compute_regional_enrichment(
     min_samples_per_region: int = 3,
     correction_method: str = "fdr_bh",
     alpha: float = 0.05,
+    region_order: Optional[List[str]] = None,
 ) -> pd.DataFrame:
     """Compute regional enrichment using Mann-Whitney U test.
 
@@ -44,6 +45,9 @@ def compute_regional_enrichment(
         Multiple testing correction: "bonferroni", "fdr_bh", "holm", or "none"
     alpha : float
         Significance threshold
+    region_order : List[str], optional
+        Order for regions in output. If provided, results will be sorted by
+        this order (case-insensitive).
 
     Returns
     -------
@@ -150,7 +154,26 @@ def compute_regional_enrichment(
         np.where(df["fold_change"] < 1, "depleted", "neutral"),
     )
 
-    return df.sort_values(["region", "p_adjusted"])
+    # Sort by region order if provided
+    if region_order is not None and len(df) > 0:
+        # Create case-insensitive order mapping
+        order_lower = {r.lower(): i for i, r in enumerate(region_order)}
+
+        def get_sort_key(region: str) -> int:
+            """Return sort key for region."""
+            region_lower = str(region).lower()
+            if region_lower in order_lower:
+                return order_lower[region_lower]
+            return len(region_order)  # Unknown regions go to end
+
+        df = df.copy()
+        df["_region_order"] = df["region"].apply(get_sort_key)
+        df = df.sort_values(["_region_order", "p_adjusted"]).drop(columns=["_region_order"])
+        df = df.reset_index(drop=True)
+    else:
+        df = df.sort_values(["region", "p_adjusted"])
+
+    return df
 
 
 def _apply_multiple_testing_correction(
@@ -284,6 +307,7 @@ def get_significant_depletions(
 
 def summarize_enrichments_by_region(
     enrichment_df: pd.DataFrame,
+    region_order: Optional[List[str]] = None,
 ) -> pd.DataFrame:
     """Summarize enrichment results by region.
 
@@ -291,6 +315,9 @@ def summarize_enrichments_by_region(
     ----------
     enrichment_df : pd.DataFrame
         Output from compute_regional_enrichment
+    region_order : List[str], optional
+        Order for regions in output. If provided, results will be sorted by
+        this order (case-insensitive).
 
     Returns
     -------
@@ -304,6 +331,21 @@ def summarize_enrichments_by_region(
         n_depleted=("direction", lambda x: (x == "depleted").sum()),
         mean_abs_log2fc=("log2_fold_change", lambda x: np.abs(x).mean()),
     ).reset_index()
+
+    # Sort by region order if provided
+    if region_order is not None and len(summary) > 0:
+        order_lower = {r.lower(): i for i, r in enumerate(region_order)}
+
+        def get_sort_key(region: str) -> int:
+            region_lower = str(region).lower()
+            if region_lower in order_lower:
+                return order_lower[region_lower]
+            return len(region_order)
+
+        summary = summary.copy()
+        summary["_region_order"] = summary["region"].apply(get_sort_key)
+        summary = summary.sort_values("_region_order").drop(columns=["_region_order"])
+        summary = summary.reset_index(drop=True)
 
     return summary
 

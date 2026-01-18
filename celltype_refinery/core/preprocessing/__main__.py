@@ -344,6 +344,7 @@ def build_cell_count_region_plot(
     verified_df: pd.DataFrame,
     output_dir: Path,
     dpi: int = 200,
+    organ: Optional[str] = None,
 ) -> Optional[Path]:
     """Generate boxplot of cell counts per region.
 
@@ -355,6 +356,8 @@ def build_cell_count_region_plot(
         Output directory for figures
     dpi : int
         Figure resolution
+    organ : str, optional
+        Organ name for region ordering
 
     Returns
     -------
@@ -383,28 +386,42 @@ def build_cell_count_region_plot(
     if not available_regions:
         return None
 
-    # Use canonical anatomical order (distal to proximal)
-    regions = sort_regions_canonical(available_regions)
+    # Use canonical anatomical order (from organ config or alphabetical fallback)
+    regions = sort_regions_canonical(available_regions, organ=organ)
 
     data = [
         counts_df.loc[counts_df["region"] == region, "matrix_rows"].astype(float).values
         for region in regions
     ]
 
-    # Create figure
-    fig, ax = plt.subplots(figsize=(max(5, len(regions) * 1.2), 4))
+    # Create figure - wider for longer region names
+    fig_width = max(6, len(regions) * 1.5)
+    fig, ax = plt.subplots(figsize=(fig_width, 5))
 
     bp = ax.boxplot(data, tick_labels=regions, vert=True, patch_artist=True)
 
-    # Color the boxes using region-specific colors
-    region_colors = {
-        "fimbriae": "#9b59b6",      # Purple
-        "infundibulum": "#2ecc71",  # Green
-        "ampulla": "#3498db",       # Blue
-        "isthmus": "#e74c3c",       # Red
-    }
+    # Get region colors from organ config (if available)
+    organ_config = None
+    if organ:
+        try:
+            from celltype_refinery.config import get_organ_config
+            organ_config = get_organ_config(organ)
+        except (ImportError, ValueError):
+            pass  # Fallback to default colors
+
+    # Color the boxes using organ-specific colors
     for patch, region in zip(bp["boxes"], regions):
-        color = region_colors.get(region.lower(), "#95a5a6")
+        if organ_config:
+            color = organ_config.get_region_color(region, default="#95a5a6")
+        else:
+            # Legacy fallback for FT
+            legacy_colors = {
+                "fimbriae": "#9b59b6",
+                "infundibulum": "#2ecc71",
+                "ampulla": "#3498db",
+                "isthmus": "#e74c3c",
+            }
+            color = legacy_colors.get(region.lower(), "#95a5a6")
         patch.set_facecolor(color)
         patch.set_alpha(0.7)
 
@@ -412,6 +429,9 @@ def build_cell_count_region_plot(
     ax.set_xlabel("Region")
     ax.set_ylabel("Cells per sample")
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: format(int(x), ",")))
+
+    # Rotate x-tick labels for better readability with long region names
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
 
     fig.tight_layout()
 
@@ -427,6 +447,7 @@ def build_donor_region_barplot(
     verified_df: pd.DataFrame,
     output_dir: Path,
     dpi: int = 200,
+    organ: Optional[str] = None,
 ) -> Optional[Path]:
     """Generate grouped bar chart of cell counts by donor and region.
 
@@ -438,6 +459,8 @@ def build_donor_region_barplot(
         Output directory for figures
     dpi : int
         Figure resolution
+    organ : str, optional
+        Organ name for region ordering
 
     Returns
     -------
@@ -470,8 +493,8 @@ def build_donor_region_barplot(
     if not donors or not available_regions:
         return None
 
-    # Use canonical anatomical order (distal to proximal)
-    regions = sort_regions_canonical(available_regions)
+    # Use canonical anatomical order (from organ config or alphabetical fallback)
+    regions = sort_regions_canonical(available_regions, organ=organ)
 
     # Pivot: donor × region
     pivot = (
@@ -486,16 +509,17 @@ def build_donor_region_barplot(
     donors = list(pivot.index)
     regions = list(pivot.columns)
 
-    # Region-specific colors (matching boxplot)
-    region_colors = {
-        "fimbriae": "#9b59b6",      # Purple
-        "infundibulum": "#2ecc71",  # Green
-        "ampulla": "#3498db",       # Blue
-        "isthmus": "#e74c3c",       # Red
-    }
+    # Get region colors from organ config (if available)
+    organ_config = None
+    if organ:
+        try:
+            from celltype_refinery.config import get_organ_config
+            organ_config = get_organ_config(organ)
+        except (ImportError, ValueError):
+            pass  # Fallback to default colors
 
-    # Create figure
-    fig_width = max(6, len(donors) * 1.4)
+    # Create figure - wider to accommodate legend with long region names
+    fig_width = max(8, len(donors) * 1.6)
     fig, ax = plt.subplots(figsize=(fig_width, 5))
 
     x_positions = np.arange(len(donors))
@@ -504,7 +528,20 @@ def build_donor_region_barplot(
     for idx, region in enumerate(regions):
         offset = (idx - (len(regions) - 1) / 2) * bar_width
         heights = pivot[region].to_numpy()
-        color = region_colors.get(region.lower(), "#95a5a6")
+
+        # Get color from organ config or fallback
+        if organ_config:
+            color = organ_config.get_region_color(region, default="#95a5a6")
+        else:
+            # Legacy fallback for FT
+            legacy_colors = {
+                "fimbriae": "#9b59b6",
+                "infundibulum": "#2ecc71",
+                "ampulla": "#3498db",
+                "isthmus": "#e74c3c",
+            }
+            color = legacy_colors.get(region.lower(), "#95a5a6")
+
         ax.bar(
             x_positions + offset,
             heights,
@@ -538,6 +575,7 @@ def generate_figures(
     output_dir: Path,
     dpi: int = 200,
     logger: Optional[logging.Logger] = None,
+    organ: Optional[str] = None,
 ) -> List[Path]:
     """Generate all Stage A visualization figures.
 
@@ -553,6 +591,8 @@ def generate_figures(
         Figure resolution
     logger : Optional[Logger]
         Logger instance
+    organ : str, optional
+        Organ name for region ordering in plots
 
     Returns
     -------
@@ -572,13 +612,13 @@ def generate_figures(
         generated.append(path)
 
     # 2. Cell count by region boxplot
-    path = build_cell_count_region_plot(verified_df, figure_dir, dpi)
+    path = build_cell_count_region_plot(verified_df, figure_dir, dpi, organ=organ)
     if path:
         logger.info(f"Generated: {path.name}")
         generated.append(path)
 
     # 3. Donor × region bar chart
-    path = build_donor_region_barplot(verified_df, figure_dir, dpi)
+    path = build_donor_region_barplot(verified_df, figure_dir, dpi, organ=organ)
     if path:
         logger.info(f"Generated: {path.name}")
         generated.append(path)
@@ -672,6 +712,7 @@ def build_area_by_region_plot(
     output_dir: Path,
     suffix: str = "",
     dpi: int = 200,
+    organ: Optional[str] = None,
 ) -> List[Path]:
     """Generate area distribution plots by region.
 
@@ -685,6 +726,8 @@ def build_area_by_region_plot(
         Filename suffix (e.g., "_post_qc")
     dpi : int
         Figure resolution
+    organ : str, optional
+        Organ name for region colors (e.g., 'fallopian_tube', 'uterus')
 
     Returns
     -------
@@ -699,8 +742,17 @@ def build_area_by_region_plot(
     except ImportError:
         return []
 
+    # Get organ config for region colors (if available)
+    organ_config = None
+    if organ:
+        try:
+            from celltype_refinery.config import get_organ_config
+            organ_config = get_organ_config(organ)
+        except (ImportError, ValueError):
+            pass  # Fallback to default colors
+
     generated = []
-    available_regions = sort_regions_canonical(list(area_df["region"].dropna().unique()))
+    available_regions = sort_regions_canonical(list(area_df["region"].dropna().unique()), organ=organ)
 
     for region in available_regions:
         region_data = area_df[area_df["region"] == region].copy()
@@ -708,6 +760,12 @@ def build_area_by_region_plot(
             continue
 
         fig, ax = plt.subplots(figsize=(8, 5))
+
+        # Get color from organ config or fallback
+        if organ_config:
+            color = organ_config.get_region_color(region, default="#95a5a6")
+        else:
+            color = FT_REGION_COLORS.get(region.lower(), "#95a5a6")
 
         # Box plot by donor if available
         if "donor" in region_data.columns:
@@ -717,14 +775,13 @@ def build_area_by_region_plot(
                 for d in donors
             ]
             bp = ax.boxplot(data, tick_labels=donors, patch_artist=True)
-            color = FT_REGION_COLORS.get(region.lower(), "#95a5a6")
             for patch in bp["boxes"]:
                 patch.set_facecolor(color)
                 patch.set_alpha(0.7)
             ax.set_xlabel("Donor")
         else:
             ax.hist(region_data["cell_area"].dropna(), bins=50, alpha=0.7,
-                    color=FT_REGION_COLORS.get(region.lower(), "#95a5a6"))
+                    color=color)
             ax.set_xlabel("Cell Area")
 
         ax.set_ylabel("Count" if "donor" not in region_data.columns else "Cell Area")
@@ -947,6 +1004,7 @@ def generate_stage_b_figures(
     intensity_threshold: Optional[float] = None,
     dpi: int = 200,
     logger: Optional[logging.Logger] = None,
+    organ: Optional[str] = None,
 ) -> List[Path]:
     """Generate all Stage B visualization figures.
 
@@ -972,6 +1030,8 @@ def generate_stage_b_figures(
         Figure resolution
     logger : Optional[Logger]
         Logger instance
+    organ : str, optional
+        Organ name for region colors (e.g., 'fallopian_tube', 'uterus')
 
     Returns
     -------
@@ -991,13 +1051,13 @@ def generate_stage_b_figures(
         generated.append(path)
 
     # 2. Area distributions by region (pre-QC)
-    paths = build_area_by_region_plot(area_metadata_df, figure_dir, suffix="", dpi=dpi)
+    paths = build_area_by_region_plot(area_metadata_df, figure_dir, suffix="", dpi=dpi, organ=organ)
     for p in paths:
         logger.info(f"Generated: {p.name}")
     generated.extend(paths)
 
     # 3. Area distributions by region (post-QC)
-    paths = build_area_by_region_plot(filtered_area_metadata_df, figure_dir, suffix="_post_qc", dpi=dpi)
+    paths = build_area_by_region_plot(filtered_area_metadata_df, figure_dir, suffix="_post_qc", dpi=dpi, organ=organ)
     for p in paths:
         logger.info(f"Generated: {p.name}")
     generated.extend(paths)
@@ -1042,6 +1102,7 @@ def run_stage_b(
     skip_figures: bool = False,
     dpi: int = 200,
     log_dir: Optional[Path] = None,
+    organ: Optional[str] = None,
 ) -> pd.DataFrame:
     """Run Stage B: Cell-level quality control.
 
@@ -1063,6 +1124,8 @@ def run_stage_b(
         Figure resolution
     log_dir : Optional[Path]
         Directory for log file
+    organ : str, optional
+        Organ name for region colors (e.g., 'fallopian_tube', 'uterus')
 
     Returns
     -------
@@ -1277,6 +1340,7 @@ def run_stage_b(
             intensity_threshold=global_intensity_threshold,
             dpi=dpi,
             logger=logger,
+            organ=organ,
         )
         logger.info(f"Generated {len(figures)} figures")
 
@@ -3693,6 +3757,7 @@ def run_stage_a(
     skip_figures: bool = False,
     dpi: int = 200,
     log_dir: Optional[Path] = None,
+    organ: Optional[str] = None,
 ) -> pd.DataFrame:
     """Run Stage A: Data loading and validation.
 
@@ -3712,6 +3777,8 @@ def run_stage_a(
         Figure resolution
     log_dir : Optional[Path]
         Directory for log file (if None, console only)
+    organ : str, optional
+        Organ name for region ordering in plots
 
     Returns
     -------
@@ -3811,6 +3878,7 @@ def run_stage_a(
             output_dir,
             dpi=dpi,
             logger=logger,
+            organ=organ,
         )
         logger.info(f"Generated {len(figures)} figures")
 
@@ -4025,6 +4093,7 @@ Examples:
                 skip_figures=args.skip_figures,
                 dpi=args.dpi,
                 log_dir=args.log_dir,
+                organ=args.organ,
             )
 
         elif args.stage == "B":
@@ -4043,6 +4112,7 @@ Examples:
                 skip_figures=args.skip_figures,
                 dpi=args.dpi,
                 log_dir=args.log_dir,
+                organ=args.organ,
             )
 
         elif args.stage == "C":
