@@ -95,6 +95,7 @@ from .biology import (
 
 # Organ-specific biology metrics (auto-registers on import)
 from .biology_ft import FallopianTubeMetrics, validate_ft_expectations
+from .biology_uterus import UterusMetrics, validate_uterus_expectations
 
 # Regional enrichment
 from .enrichment import (
@@ -182,6 +183,8 @@ __all__ = [
     # Organ-specific biology
     "FallopianTubeMetrics",
     "validate_ft_expectations",
+    "UterusMetrics",
+    "validate_uterus_expectations",
     # Enrichment
     "compute_regional_enrichment",
     "get_significant_enrichments",

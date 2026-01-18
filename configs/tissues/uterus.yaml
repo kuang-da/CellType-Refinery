@@ -1,20 +1,18 @@
 # Uterus Organ Configuration
 # =============================================================================
 # Canonical region ordering and colors for visualizations.
-# Order: Cervix first, then Anterior wall (caudal to cranial), then Posterior wall
 
 organ: "uterus"
 aliases: ["ut", "uterine"]
 
 regions:
-  # Grouped by wall: Cervix, Anterior (caudal→cranial), Posterior
   order:
+    - Anterior_Wall_Body
+    - Anterior_Wall_Lower_Segment
     - Ectocervix
     - Endocervix
-    - Anterior_Wall_Lower_Segment
-    - Anterior_Wall_Body
-    - Anterior_Wall_Fundus
     - Posterior_Wall_Body
+    - Anterior_Wall_Fundus
 
   # Region colors (consistent across all visualizations)
   colors:
@@ -27,16 +25,19 @@ regions:
 
 # Cell type classification patterns (for biology metrics)
 patterns:
+  # Core categories (standard fields in PatternConfig)
   epithelial:
     - "Epithelium"
     - "Epithelial"
     - "Glandular"
     - "Luminal"
+    - "Ciliated"
   stromal:
-    - "Stromal"
-    - "Stroma"
+    # In uterus marker map, "Mesenchymal Cells" is the root (not "Stromal")
+    # Stromal is a subset of Mesenchymal; use Mesenchymal as primary pattern
+    - "Mesenchymal"
     - "Fibroblast"
-    - "Decidual"
+    - "Pericyte"
   smooth_muscle:
     - "Smooth"
     - "SMA"
@@ -50,7 +51,29 @@ patterns:
     - "Macrophage"
     - "NK"
     - "uNK"
+    - "B Cell"
+    - "T Cell"
+    - "Dendritic"
+    - "Granulocyte"
   endothelial:
     - "Endothel"
     - "Vascular"
     - "Lymphatic"
+
+  # Uterus-specific patterns (loaded into PatternConfig.custom)
+  glandular:
+    - "Glandular"
+    - "Gland"
+  luminal:
+    - "Luminal"
+  vascular:
+    - "Vascular"
+    - "Blood"
+  lymphatic:
+    - "Lymphatic"
+  mesenchymal:
+    - "Mesenchymal"
+    - "MSC"
+    - "Stem"
+  macrophage:
+    - "Macrophage"
