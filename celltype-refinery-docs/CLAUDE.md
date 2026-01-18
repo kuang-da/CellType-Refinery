@@ -1,5 +1,13 @@
 # Claude Code Guidelines for celltype-refinery-docs
 
+## Deploy the documentation
+
+```bash
+cd CellType-Refinery/celltype-refinery-docs
+npm run build
+npm run deploy
+```
+
 ## Documentation Standards
 
 ### Link Validation
