@@ -1,0 +1,56 @@
+# Uterus Organ Configuration
+# =============================================================================
+# Canonical region ordering and colors for visualizations.
+# Order: Cervix first, then Anterior wall (caudal to cranial), then Posterior wall
+
+organ: "uterus"
+aliases: ["ut", "uterine"]
+
+regions:
+  # Grouped by wall: Cervix, Anterior (caudal→cranial), Posterior
+  order:
+    - Ectocervix
+    - Endocervix
+    - Anterior_Wall_Lower_Segment
+    - Anterior_Wall_Body
+    - Anterior_Wall_Fundus
+    - Posterior_Wall_Body
+
+  # Region colors (consistent across all visualizations)
+  colors:
+    Ectocervix: "#E91E63"                 # Pink
+    Endocervix: "#9C27B0"                 # Purple
+    Anterior_Wall_Lower_Segment: "#673AB7" # Deep Purple
+    Anterior_Wall_Body: "#3F51B5"         # Indigo
+    Anterior_Wall_Fundus: "#00BCD4"       # Cyan
+    Posterior_Wall_Body: "#4CAF50"        # Green
+
+# Cell type classification patterns (for biology metrics)
+patterns:
+  epithelial:
+    - "Epithelium"
+    - "Epithelial"
+    - "Glandular"
+    - "Luminal"
+  stromal:
+    - "Stromal"
+    - "Stroma"
+    - "Fibroblast"
+    - "Decidual"
+  smooth_muscle:
+    - "Smooth"
+    - "SMA"
+    - "Myometrium"
+    - "muscle"
+  immune:
+    - "Immune"
+    - "CD45"
+    - "Myeloid"
+    - "Lymphoid"
+    - "Macrophage"
+    - "NK"
+    - "uNK"
+  endothelial:
+    - "Endothel"
+    - "Vascular"
+    - "Lymphatic"

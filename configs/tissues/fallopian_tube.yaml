@@ -1,0 +1,60 @@
+# Fallopian Tube Organ Configuration
+# =============================================================================
+# Canonical region ordering and colors for visualizations.
+# Order: Distal (fimbriae) to Proximal (isthmus)
+
+organ: "fallopian_tube"
+aliases: ["ft", "fallopian", "oviduct"]
+
+regions:
+  # Anatomical order: distal to proximal
+  order:
+    - fimbriae
+    - infundibulum
+    - ampulla
+    - isthmus
+
+  # Region colors (consistent across all visualizations)
+  colors:
+    fimbriae: "#9b59b6"       # Purple
+    infundibulum: "#2ecc71"   # Green
+    ampulla: "#3498db"        # Blue
+    isthmus: "#e74c3c"        # Red
+
+# Cell type classification patterns (for biology metrics)
+patterns:
+  epithelial:
+    - "Epithelium"
+    - "Ciliated"
+    - "Secretory"
+    - "Glandular"
+    - "Peg"
+  stromal:
+    - "Stromal"
+    - "Fibroblast"
+    - "Mesenchymal"
+  smooth_muscle:
+    - "Smooth"
+    - "SMA"
+    - "ACTA2"
+    - "muscle"
+  immune:
+    - "Immune"
+    - "CD45"
+    - "Myeloid"
+    - "Lymphoid"
+    - "Macrophage"
+    - "T cell"
+    - "NK"
+  endothelial:
+    - "Endothel"
+    - "Vascular"
+    - "Lymphatic"
+  ciliated:
+    - "Ciliated"
+    - "FOXJ1"
+  secretory:
+    - "Secretory"
+    - "PAX8"
+    - "Glandular"
+    - "Peg"
